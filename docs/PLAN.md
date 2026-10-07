@@ -280,8 +280,8 @@ Conventions: JSON throughout. Errors are `{ "detail": "..." }`. Every endpoint e
 
 Media: `/media/*` serves `UPLOADS_DIR` through `MediaFiles` (`core/media.py`), a `StaticFiles` subclass that adds `X-Content-Type-Options: nosniff`, which `StaticFiles` doesn't send. Avatars are public to anyone with the (unguessable) URL. Attachments (phase 8) get an authenticated endpoint instead.
 | GET | `/users/me/settings` · PATCH `/users/me/settings` | Theme, privacy and notification toggles |
-| GET | `/users/search?q=` | Matches an exact phone number, a username prefix, or a name among my contacts. Max 20 results. |
-| GET | `/users/{id}` | Public profile + presence (`online`, `last_seen_at`) |
+| GET | `/users/search?q=` | Matches an **exact** phone number (separators stripped), a **username prefix** (`@` optional, LIKE wildcards escaped), or a **name among my contacts only** (strangers can't be found by name). Excludes me and users who haven't finished onboarding. Contacts first, max 20. |
+| GET | `/users/{id}` | Public profile (`UserPublic`): name as the viewer sees it (nickname > display name > phone), username, about, avatar, `is_contact`. **`phone_number` only if they're my contact.** Presence (`online`, `last_seen_at`) is added in phase 5. |
 
 ### Contacts
 | Method | Path | Notes |
@@ -301,9 +301,9 @@ Media: `/media/*` serves `UPLOADS_DIR` through `MediaFiles` (`core/media.py`), a
 ### Conversations
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/conversations?archived=false` | Chat list: `id, type, title, avatar, last_message (preview + status), unread_count, is_pinned, muted_until, members_preview`. Sorted pinned first, then by `last_message_at DESC`. Hides conversations with `last_message_at IS NULL`, i.e. empty DMs (see 7.3). |
-| POST | `/conversations/direct` | `{user_id}`, get-or-create via `direct_key`. 201 if created, 200 if it already existed. The new DM can be opened right away but only appears in either user's list after the first message. |
-| GET | `/conversations/{id}` | Detail, including active members and my role |
+| GET | `/conversations?archived=false` | Chat list (`ConversationSummary`): `id, type, title, avatar_url, avatar_color, other_user_id, is_contact` (DMs), `member_count, is_pinned, is_archived, muted_until, is_active, unread_count, sort_at`, and `last_message {id, kind, text, sender_id, sender_name, created_at, status}`. `status` is only set on my own text messages (capped at `delivered` if my read receipts are off). `sender_name` is null for mine. System-message `text` is worded for the viewer on the server (`services/names.py`: "You created the group.", "Alex Rivera removed you."). Preview, unread count and `sort_at` use only messages visible to me (1.6). Sorted pinned first, then `sort_at` desc. Empty DMs are hidden (7.3). About 3 small indexed queries per conversation, fine at demo scale. |
+| POST | `/conversations/direct` | `{user_id}`, get-or-create via `direct_key`. 201 if created, 200 if it already existed. 400 for yourself, 404 for an unknown user. A race on the UNIQUE key is caught and returns the existing DM. The new DM can be opened right away but only appears in either user's list after the first message. |
+| GET | `/conversations/{id}` | Summary fields plus active members (`name` is "You" for me), `my_role`, and for DMs `groups_in_common` (names of groups both people are active in, for the "Member of …" line). Works for former members too (`is_active: false`). 404 if never a member. |
 | PATCH | `/conversations/{id}/preferences` | `{is_pinned?, is_archived?, muted_until?}` (my membership only) |
 | POST | `/conversations/{id}/read` | `{up_to_message_id}`. Always moves my watermark. Sets `read_at` and pushes `message.status` to senders **only if my read receipts are on** (see 7.4). Returns 204. |
 

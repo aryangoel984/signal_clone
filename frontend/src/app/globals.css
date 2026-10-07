@@ -26,6 +26,11 @@
   --color-text-secondary: var(--text-secondary);
   --color-text-muted: var(--text-muted);
 
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-header-shadow: var(--header-shadow);
   --color-toggle-on: var(--toggle-on);
   --color-toggle-off: var(--toggle-off);
   --color-toggle-knob: var(--toggle-knob);

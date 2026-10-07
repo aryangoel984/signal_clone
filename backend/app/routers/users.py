@@ -1,8 +1,11 @@
-from fastapi import APIRouter, HTTPException, UploadFile, status
+from typing import Annotated
+
+from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 
 from app.core.deps import AppSettings, CurrentUser, DbSession
+from app.schemas.contact import UserPublic
 from app.schemas.user import MeResponse, UpdateMeRequest
-from app.services import user_service
+from app.services import contact_service, user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -37,3 +40,16 @@ async def upload_avatar(file: UploadFile, user: CurrentUser, db: DbSession, sett
 @router.delete("/me/avatar")
 async def delete_avatar(user: CurrentUser, db: DbSession, settings: AppSettings) -> MeResponse:
     return MeResponse.model_validate(await user_service.remove_avatar(db, user, settings.uploads_dir))
+
+
+@router.get("/search")
+async def search_users(user: CurrentUser, db: DbSession, q: Annotated[str, Query(max_length=64)] = "") -> list[UserPublic]:
+    return await contact_service.search_users(db, user, q)
+
+
+@router.get("/{user_id}")
+async def get_user(user_id: int, user: CurrentUser, db: DbSession) -> UserPublic:
+    try:
+        return await contact_service.get_public_profile(db, user, user_id)
+    except contact_service.UserNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="User not found") from None

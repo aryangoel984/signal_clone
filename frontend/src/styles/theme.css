@@ -40,8 +40,16 @@
   --text-secondary: #5e5e5e; /* list previews, timestamps */
   --text-muted: #646464; /* date separators, system messages */
 
+  /* accent: Signal's buttons, toggles and links (distinct from the bubble blue) */
+  --accent: #4955f6;
+  --on-accent: #ffffff;
+
+  /* "Name not verified" chip */
+  --warning: #b94b29;
+  --warning-bg: #f2e5e1;
+
   /* controls */
-  --toggle-on: #4955f6;
+  --toggle-on: var(--accent);
   --toggle-off: #f5f5f5;
   --toggle-knob: #ffffff;
 
@@ -50,27 +58,28 @@
   --danger-bg: #fdf3f2;
 
   /* avatar palette: background / initials, same in both themes.
-     Values from Signal's palette by memory; UNVERIFIED against docs/reference (re-check in phase 3). */
+     A110 A120 A130 A140 A170 A180 A190 sampled from docs/reference (contacts list);
+     A100 A150 A160 A200 A210 don't appear there and are from Signal's palette by memory. */
   --avatar-A100-bg: #e3e3fe;
   --avatar-A100-fg: #3838f5;
-  --avatar-A110-bg: #dde7fc;
-  --avatar-A110-fg: #1251d3;
-  --avatar-A120-bg: #d8e8f0;
-  --avatar-A120-fg: #086da0;
-  --avatar-A130-bg: #cde4cd;
-  --avatar-A130-fg: #067906;
-  --avatar-A140-bg: #eae0fd;
-  --avatar-A140-fg: #661aff;
+  --avatar-A110-bg: #dfe7fa;
+  --avatar-A110-fg: #2650cc;
+  --avatar-A120-bg: #dbe8ef;
+  --avatar-A120-fg: #306c9c;
+  --avatar-A130-bg: #d2e3cf;
+  --avatar-A130-fg: #357721;
+  --avatar-A140-bg: #e8e1fb;
+  --avatar-A140-fg: #5e20f5;
   --avatar-A150-bg: #f5e3fe;
   --avatar-A150-fg: #9f00f0;
   --avatar-A160-bg: #f6d8ec;
   --avatar-A160-fg: #b8057c;
-  --avatar-A170-bg: #f5d7d7;
-  --avatar-A170-fg: #be0404;
-  --avatar-A180-bg: #fef5d0;
-  --avatar-A180-fg: #836b01;
-  --avatar-A190-bg: #eae6d5;
-  --avatar-A190-fg: #7d6f40;
+  --avatar-A170-bg: #f0d8d8;
+  --avatar-A170-fg: #ae2519;
+  --avatar-A180-bg: #fdf6d4;
+  --avatar-A180-fg: #7f6c21;
+  --avatar-A190-bg: #eae6d7;
+  --avatar-A190-fg: #7b7046;
   --avatar-A200-bg: #d2d2dc;
   --avatar-A200-fg: #4f4f6d;
   --avatar-A210-bg: #d7d7d9;
@@ -107,7 +116,11 @@
     --text-secondary: #b9b9b9;
     --text-muted: #a3a3a3;
 
-    --toggle-on: #5863f6;
+    --accent: #5863f6;
+    --on-accent: #eff0fe;
+    --warning: #df9b82;
+    --warning-bg: #312926;
+    --toggle-on: var(--accent);
     --toggle-off: #313131;
     --toggle-knob: #eff0fe;
 
@@ -137,7 +150,11 @@
   --text-secondary: #b9b9b9;
   --text-muted: #a3a3a3;
 
-  --toggle-on: #5863f6;
+  --accent: #5863f6;
+  --on-accent: #eff0fe;
+  --warning: #df9b82;
+  --warning-bg: #312926;
+  --toggle-on: var(--accent);
   --toggle-off: #313131;
   --toggle-knob: #eff0fe;
 

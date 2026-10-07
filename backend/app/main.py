@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import Settings, get_settings
 from app.core.db import Database, create_database, init_db
 from app.core.media import MediaFiles
-from app.routers import auth, health, users
+from app.routers import auth, contacts, conversations, health, users
 
 API_PREFIX = "/api/v1"
 
@@ -38,6 +38,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(users.router, prefix=API_PREFIX)
+    app.include_router(contacts.router, prefix=API_PREFIX)
+    app.include_router(conversations.router, prefix=API_PREFIX)
 
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/media", MediaFiles(directory=settings.uploads_dir), name="media")
