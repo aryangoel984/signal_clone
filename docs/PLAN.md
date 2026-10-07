@@ -12,6 +12,7 @@
 | Schema creation | `Base.metadata.create_all()` (run via `conn.run_sync`) + idempotent `seed.py` | The schema is greenfield and owned by one person. Alembic adds ceremony we don't need yet. If we need it after deploy, we add it then. |
 | Timestamps | UTC, via the `UTCDateTime` column type (`core/time.py`): stored as naive UTC text, returned as timezone-aware UTC. Naive datetimes are rejected on write. | SQLite has no timezone support, and mixing naive and aware datetimes causes comparison bugs. Python code only ever sees aware UTC. The frontend formats times for display. |
 | Message status | Not stored on `messages`. Derived from `message_receipts` | One source of truth. Groups need per-member status anyway. `sending` exists only on the client. |
+| Auth token storage | `Authorization: Bearer` + `localStorage` (not an httpOnly cookie). See "Auth token storage" in section 2. | Frontend and API are on different sites, so a cookie would be a third-party cookie: it needs `SameSite=None`, CSRF protection, and can be blocked by the browser. WebSockets can't send an `Authorization` header and need the token explicitly anyway. |
 | Writes vs push | REST for every persisted mutation. WS for server push and short-lived client events (typing) | REST gives validation, status codes and idempotency. WS stays a simple broadcast channel. |
 | Real-time scale | One process, in-memory connection manager (`uvicorn --workers 1`) | Enough for the demo. Stated as an assumption in the README. Redis pub/sub would be the next step. |
 | SQLite settings | A sync `"connect"` listener on `engine.sync_engine` (`core/db.py`) runs, in order: `busy_timeout=5000`, `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=NORMAL`, on **every** connection | `busy_timeout` comes first so the later pragmas wait for a lock instead of failing. `foreign_keys` is per-connection and off by default. WAL lets reads run while a write is in progress. The listener is sync because pool events fire on the sync engine; with aiosqlite it receives SQLAlchemy's sync-style adapter connection. |
@@ -231,13 +232,53 @@ Conventions: JSON throughout. Errors are `{ "detail": "..." }`. Every endpoint e
 | POST | `/auth/otp/verify` | `{phone_number, code}` | 200 `{token, user, is_new_user}`. Creates the user and settings on first verify. 400 if the code is wrong. |
 | POST | `/auth/logout` | — | 204, deletes the current session |
 
+**Auth details (implemented in phase 2)**
+- **Phone numbers:**
+  - Normalized by stripping spaces, dashes, brackets and dots, then must be **E.164** (`^\+[1-9]\d{7,14}$`). Otherwise 422.
+  - One shared type, `PhoneNumber` in `schemas/common.py`.
+  - The frontend builds the number from a country dial code plus the national number, and drops a trunk `0`.
+- **Unknown number = registration** (Signal has no separate sign-up):
+  - The first verify creates the `users` and `user_settings` rows, with `display_name` NULL. The frontend then shows `/onboarding`.
+  - `otp/request` answers 202 for any valid number. `otp/verify`'s `is_new_user` *does* reveal whether a number was registered. That's accepted for the mock and noted in the README.
+- **Sessions:**
+  - The token is `secrets.token_urlsafe(32)`, returned once. Only its SHA-256 is stored.
+  - Fixed **30-day** expiry (`SESSION_TTL_DAYS`).
+  - `last_used_at` is refreshed at most once an hour.
+- **`get_current_user`:** a Bearer token that's missing, unknown or expired gives 401 with `WWW-Authenticate: Bearer`.
+- **Logout:** revokes only the current session.
+- **CORS:**
+  - Explicit `allow_headers=["Authorization", "Content-Type"]`. A preflight with `Access-Control-Request-Headers: authorization` is tested.
+  - `allow_credentials=False`, since there are no cookies.
+
+**Auth token storage: Bearer + `localStorage`**
+- **Why not an httpOnly cookie:**
+  - **Cross-site:** the frontend (`*.vercel.app`) and the API (`*.up.railway.app`) are different sites. A cookie would need `SameSite=None; Secure` and requests sent with credentials, plus CSRF protection.
+  - **Blocked cookies:** browsers increasingly block third-party cookies, so login could silently fail.
+  - **No same-origin proxy:** proxying the API through Next.js rewrites would make it same-origin, but Vercel can't proxy WebSockets.
+  - **WebSockets:** browsers can't set an `Authorization` header on them, so `/ws?token=` needs the token in JavaScript regardless.
+- **The cost:** an XSS bug could read the token. A cookie would only let it make requests while the page is open, not steal the token.
+- **Mitigations:**
+  - React escapes all output, and user content is never rendered with `dangerouslySetInnerHTML`.
+  - Uploads are type-checked and served with `nosniff`.
+  - Logout really revokes the token server-side.
+  - Only hashes are stored server-side.
+  - **Planned for phase 9:** a nonce-based Content-Security-Policy. It needs `proxy.ts`, because Next's inline hydration scripts break a plain `script-src 'self'`.
+- **`localStorage`, not `sessionStorage`:** the session must survive reloads and new tabs.
+- **Reloads:**
+  - The server render and the first client render show a neutral splash.
+  - After mount, `store/auth.ts` restores the token and **cached profile** from storage synchronously and shows the right screen at once. `/users/me` revalidates in the background.
+  - Any 401 clears the session.
+  - Guards (`features/auth/guards.tsx`) are client-side, because `proxy.ts` can't read `localStorage`.
+
 ### Users & profile
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/users/me` | Current profile |
-| PATCH | `/users/me` | `{display_name?, about?, username?}`. Onboarding uses this. 409 if the username is taken. |
-| PUT | `/users/me/avatar` | multipart image upload, returns `{avatar_url}` |
-| DELETE | `/users/me/avatar` | Back to the initials avatar |
+| GET | `/users/me` | Current profile (includes own phone number) |
+| PATCH | `/users/me` | `{display_name?, about?, username?}`, PATCH semantics (only sent fields change, unknown fields → 422). Onboarding uses this. `display_name` 1–64 characters after trimming. `about` ≤ 140. `username` lowercased, `^[a-z0-9_.]{3,32}$`. 409 if the username is taken. |
+| PUT | `/users/me/avatar` | multipart field `file`. Type detected from the **first bytes** (JPEG/PNG/WebP only, no SVG), so a spoofed `Content-Type` → 415. Max **5 MB**, read in chunks → 413. Saved as `UPLOADS_DIR/avatars/{user_id}-{random}.{ext}` (server-chosen name). The old file is deleted. Returns the profile with `avatar_url = "/media/avatars/…"`. |
+| DELETE | `/users/me/avatar` | Back to the initials avatar (file deleted) |
+
+Media: `/media/*` serves `UPLOADS_DIR` through `MediaFiles` (`core/media.py`), a `StaticFiles` subclass that adds `X-Content-Type-Options: nosniff`, which `StaticFiles` doesn't send. Avatars are public to anyone with the (unguessable) URL. Attachments (phase 8) get an authenticated endpoint instead.
 | GET | `/users/me/settings` · PATCH `/users/me/settings` | Theme, privacy and notification toggles |
 | GET | `/users/search?q=` | Matches an exact phone number, a username prefix, or a name among my contacts. Max 20 results. |
 | GET | `/users/{id}` | Public profile + presence (`online`, `last_seen_at`) |

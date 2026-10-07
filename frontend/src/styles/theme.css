@@ -49,6 +49,33 @@
   --danger: #de3622;
   --danger-bg: #fdf3f2;
 
+  /* avatar palette: background / initials, same in both themes.
+     Values from Signal's palette by memory; UNVERIFIED against docs/reference (re-check in phase 3). */
+  --avatar-A100-bg: #e3e3fe;
+  --avatar-A100-fg: #3838f5;
+  --avatar-A110-bg: #dde7fc;
+  --avatar-A110-fg: #1251d3;
+  --avatar-A120-bg: #d8e8f0;
+  --avatar-A120-fg: #086da0;
+  --avatar-A130-bg: #cde4cd;
+  --avatar-A130-fg: #067906;
+  --avatar-A140-bg: #eae0fd;
+  --avatar-A140-fg: #661aff;
+  --avatar-A150-bg: #f5e3fe;
+  --avatar-A150-fg: #9f00f0;
+  --avatar-A160-bg: #f6d8ec;
+  --avatar-A160-fg: #b8057c;
+  --avatar-A170-bg: #f5d7d7;
+  --avatar-A170-fg: #be0404;
+  --avatar-A180-bg: #fef5d0;
+  --avatar-A180-fg: #836b01;
+  --avatar-A190-bg: #eae6d5;
+  --avatar-A190-fg: #7d6f40;
+  --avatar-A200-bg: #d2d2dc;
+  --avatar-A200-fg: #4f4f6d;
+  --avatar-A210-bg: #d7d7d9;
+  --avatar-A210-fg: #5c5c5c;
+
   /* layout (CSS px, measured from 2x screenshots) */
   --nav-rail-width: 80px;
   --sidebar-width: 320px;

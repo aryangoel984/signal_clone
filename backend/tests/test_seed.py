@@ -1,11 +1,12 @@
 from collections import defaultdict
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.db import Database
+from app.core.db import Database, create_database
 from app.models import Conversation, ConversationMember, Message, MessageReceipt, User, UserSettings
 from app.models.enums import ConversationType, MessageKind, MessageStatus
 from app.seed import run_seed, table_counts
@@ -35,6 +36,18 @@ async def membership(session: AsyncSession, conversation: Conversation, user: Us
     member = await session.get(ConversationMember, (conversation.id, user.id))
     assert member is not None
     return member
+
+
+async def test_seed_creates_tables_on_an_empty_database(tmp_path: Path) -> None:
+    """First boot on an empty volume: no tables exist yet, the seed must create them."""
+    fresh = create_database(f"sqlite+aiosqlite:///{tmp_path / 'empty.db'}")
+    try:
+        await run_seed(fresh)
+        counts = await table_counts(fresh)
+    finally:
+        await fresh.engine.dispose()
+
+    assert counts["users"] > 0 and counts["messages"] > 0
 
 
 async def test_seed_twice_creates_no_duplicates(seeded: Database) -> None:

@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -18,6 +19,7 @@ def settings(tmp_path: Path) -> Settings:
     # empty database, and WAL mode doesn't apply to in-memory databases.
     return Settings(
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'test.db'}",
+        uploads_dir=tmp_path / "uploads",
         cors_origins=[TEST_ORIGIN],
         demo_bots_enabled=False,
     )
@@ -39,7 +41,21 @@ async def session(database: Database) -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def client(settings: Settings) -> AsyncIterator[AsyncClient]:
+async def client(settings: Settings, database: Database) -> AsyncIterator[AsyncClient]:
+    """HTTP client against the real app, with its lifespan (init_db on startup) running."""
     app = create_app(settings)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http_client:
-        yield http_client
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http_client:
+            yield http_client
+
+
+async def sign_in(client: AsyncClient, phone_number: str = "+15557770001") -> tuple[str, dict[str, Any]]:
+    """Verifies a number and returns (token, response body)."""
+    response = await client.post("/api/v1/auth/otp/verify", json={"phone_number": phone_number, "code": "123456"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    return body["token"], body
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}

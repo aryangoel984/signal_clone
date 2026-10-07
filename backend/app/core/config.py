@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field, field_validator
@@ -11,6 +12,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "sqlite+aiosqlite:///./app.db"
+    uploads_dir: Path = Path("uploads")
+    session_ttl_days: int = 30
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
     demo_bots_enabled: bool = True
     demo_bot_phones: Annotated[list[str], NoDecode] = Field(

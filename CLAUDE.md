@@ -15,7 +15,7 @@ Read these before starting any task:
 - **Backend:** Python 3.11+, FastAPI, SQLAlchemy 2.x, Pydantic v2
 - **Database:** SQLite (file: `backend/app.db`), migrations via Alembic or `create_all` (decide in PLAN.md)
 - **Real-time:** native FastAPI WebSockets (no Socket.IO)
-- **Auth:** mocked OTP (fixed code `123456`), session token stored server-side, sent as a Bearer token or httpOnly cookie
+- **Auth:** mocked OTP (fixed code `123456`), session token stored server-side (hashed), sent as `Authorization: Bearer <token>`. The frontend keeps it in `localStorage`, not an httpOnly cookie (decided; reasons in PLAN.md "Auth token storage")
 
 ## Repo structure
 ```
