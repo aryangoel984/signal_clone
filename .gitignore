@@ -21,3 +21,4 @@ backend/uploads/
 # Node / Next
 node_modules/
 .next/
+docs/reference/
