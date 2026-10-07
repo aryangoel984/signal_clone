@@ -1,0 +1,23 @@
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Backend runtime data
+backend/app.db*
+backend/uploads/
+
+# Env files (examples are committed)
+.env
+.env.*
+!.env.example
+
+# Node / Next
+node_modules/
+.next/
