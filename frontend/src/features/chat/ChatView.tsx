@@ -3,52 +3,60 @@
 import { useEffect, useState } from "react";
 
 import { ApiError, apiRequest } from "@/lib/api";
+import { useAuthStore } from "@/store/auth";
+import { useMessages } from "@/store/messages";
 import type { ConversationDetail } from "@/types/conversation";
 
 import { ChatHeader } from "./ChatHeader";
-import { ConversationHero } from "./ConversationHero";
+import { Composer } from "./Composer";
+import { Timeline } from "./Timeline";
 
 type LoadState =
-  | { conversationId: number; kind: "ready"; conversation: ConversationDetail }
-  | { conversationId: number; kind: "error"; message: string };
+  | { kind: "ready"; conversation: ConversationDetail; lastReadAtOpen: number }
+  | { kind: "error"; message: string };
 
-/** One open conversation. Phase 3: header + intro card; the timeline and composer come in phase 4. */
+/** One open conversation: header, timeline and composer. Remounted per conversation (keyed by id). */
 export function ChatView({ conversationId }: { conversationId: number }) {
+  const me = useAuthStore((state) => state.user);
+  const loadLatest = useMessages((state) => state.loadLatest);
+  const send = useMessages((state) => state.send);
   const [state, setState] = useState<LoadState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    apiRequest<ConversationDetail>(`/conversations/${conversationId}`)
-      .then((conversation) => !cancelled && setState({ conversationId, kind: "ready", conversation }))
-      .catch(
-        (error: unknown) =>
-          !cancelled &&
-          setState({
-            conversationId,
-            kind: "error",
-            message: error instanceof ApiError && error.status === 404 ? "This conversation doesn't exist." : "Couldn't load this conversation.",
-          }),
-      );
+    Promise.all([apiRequest<ConversationDetail>(`/conversations/${conversationId}`), loadLatest(conversationId)])
+      .then(([conversation]) => {
+        if (!cancelled) setState({ kind: "ready", conversation, lastReadAtOpen: conversation.last_read_message_id });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const notFound = error instanceof ApiError && error.status === 404;
+        setState({ kind: "error", message: notFound ? "This conversation doesn't exist." : "Couldn't load this conversation." });
+      });
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [conversationId, loadLatest]);
 
-  const current = state?.conversationId === conversationId ? state : null; // ignore a previous chat's result
-  if (current === null) return <div className="flex-1 bg-chat" aria-busy="true" />;
-  if (current.kind === "error") {
-    return <div className="flex flex-1 items-center justify-center bg-chat text-sm text-text-secondary">{current.message}</div>;
+  if (state === null || !me) return <div className="flex-1 bg-chat" aria-busy="true" />;
+  if (state.kind === "error") {
+    return <div className="flex flex-1 items-center justify-center bg-chat text-sm text-text-secondary">{state.message}</div>;
   }
 
+  const { conversation } = state;
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-chat">
       <ChatHeader
-        conversation={current.conversation}
-        onChanged={(conversation) => setState({ conversationId, kind: "ready", conversation })}
+        conversation={conversation}
+        onChanged={(updated) => setState({ ...state, conversation: updated })}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto px-4">
-        <ConversationHero conversation={current.conversation} />
-      </div>
+      <Timeline conversation={conversation} myId={me.id} lastReadAtOpen={state.lastReadAtOpen} />
+      <Composer
+        onSend={(text) => void send(conversationId, text, me)}
+        disabledReason={
+          conversation.is_active ? undefined : "You can't send messages to this group because you're no longer a member."
+        }
+      />
     </div>
   );
 }

@@ -11,7 +11,15 @@ const LABELS: Record<MessageStatus | "sending", string> = {
  * Signal's delivery marks: sent = one outlined check-circle, delivered = two outlined
  * overlapping circles, read = two filled circles. Drawn in currentColor.
  */
-export function StatusTicks({ status, size = 16 }: { status: MessageStatus | "sending"; size?: number }) {
+export function StatusTicks({
+  status,
+  size = 16,
+  checkColor = "var(--bg-sidebar)",
+}: {
+  status: MessageStatus | "sending";
+  size?: number;
+  checkColor?: string; // color of the check inside filled (read) circles: the background behind them
+}) {
   const height = (size * 12) / 16;
   if (status === "sending") {
     return (
@@ -32,7 +40,7 @@ export function StatusTicks({ status, size = 16 }: { status: MessageStatus | "se
     <path
       d={`M${3.4 + offset} 6.1l1.7 1.6 3.2-3.4`}
       fill="none"
-      stroke={filled ? "var(--bg-sidebar)" : "currentColor"}
+      stroke={filled ? checkColor : "currentColor"}
       strokeWidth="1.3"
       strokeLinecap="round"
       strokeLinejoin="round"

@@ -54,7 +54,8 @@ export function ConversationHero({ conversation }: { conversation: ConversationD
         )}
         <p className="flex items-center gap-1.5 text-[13px] text-text-primary">
           <Users size={14} strokeWidth={1.75} aria-hidden />
-          {isGroup ? groupMembersLine(conversation) : groupsInCommonLine(conversation.groups_in_common)}
+          {/* one span, so the flex gap only separates the icon from the text */}
+          <span>{isGroup ? groupMembersLine(conversation) : groupsInCommonLine(conversation.groups_in_common)}</span>
         </p>
       </div>
     </div>

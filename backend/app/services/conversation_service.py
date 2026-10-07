@@ -16,6 +16,7 @@ from app.schemas.conversation import (
     MemberOut,
     UpdatePreferencesRequest,
 )
+from app.services import receipt_service
 from app.services.message_queries import aggregate_status, last_visible_message, unread_count
 from app.services.names import describe_system_message, display_names, user_ids_in
 
@@ -44,7 +45,9 @@ class _Context:
 async def list_conversations(session: AsyncSession, viewer: User, *, archived: bool) -> list[ConversationSummary]:
     """The chat list. Preview, unread count and ordering only consider messages the viewer
     can see (history range + blocks, PLAN 1.6). Empty DMs are hidden (PLAN 7.3).
-    Roughly three small indexed queries per conversation: fine at demo scale."""
+    Roughly three small indexed queries per conversation: fine at demo scale.
+    Loading the list also counts as the client receiving its pending messages (delivered)."""
+    await receipt_service.mark_all_delivered(session, viewer.id)
     rows = (
         await session.execute(
             select(ConversationMember, Conversation)
@@ -68,7 +71,7 @@ async def list_conversations(session: AsyncSession, viewer: User, *, archived: b
 
 
 async def get_conversation(session: AsyncSession, viewer: User, conversation_id: int) -> ConversationDetail:
-    member, conversation = await _membership(session, viewer.id, conversation_id)
+    member, conversation = await load_membership(session, viewer.id, conversation_id)
     context = await _load_context(session, viewer)
     members = (await _active_members(session, [conversation.id]))[conversation.id]
     summary = await _summarize(session, context, member, conversation, members)
@@ -89,6 +92,7 @@ async def get_conversation(session: AsyncSession, viewer: User, conversation_id:
         groups_in_common=await _groups_in_common(session, viewer.id, summary.other_user_id)
         if summary.other_user_id is not None
         else [],
+        last_read_message_id=member.last_read_message_id,
     )
 
 
@@ -134,7 +138,7 @@ async def get_or_create_direct(
 async def update_preferences(
     session: AsyncSession, viewer: User, conversation_id: int, changes: UpdatePreferencesRequest
 ) -> ConversationDetail:
-    member, _ = await _membership(session, viewer.id, conversation_id)
+    member, _ = await load_membership(session, viewer.id, conversation_id)
     for name, value in changes.model_dump(exclude_unset=True).items():
         setattr(member, name, value)
     await session.commit()
@@ -144,7 +148,7 @@ async def update_preferences(
 # --- helpers ----------------------------------------------------------------------------
 
 
-async def _membership(session: AsyncSession, viewer_id: int, conversation_id: int) -> tuple[ConversationMember, Conversation]:
+async def load_membership(session: AsyncSession, viewer_id: int, conversation_id: int) -> tuple[ConversationMember, Conversation]:
     """404 unless the viewer is or was a member: we don't reveal that other conversations exist."""
     row = (
         await session.execute(

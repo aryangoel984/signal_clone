@@ -47,6 +47,7 @@ class ConversationDetail(ConversationSummary):
     members: list[MemberOut]
     my_role: MemberRole
     groups_in_common: list[str]  # DMs only: names of groups both people are active in
+    last_read_message_id: int  # my read watermark, for the "N Unread Messages" divider
 
 
 class CreateDirectRequest(BaseModel):

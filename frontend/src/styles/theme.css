@@ -85,6 +85,21 @@
   --avatar-A210-bg: #d7d7d9;
   --avatar-A210-fg: #5c5c5c;
 
+  /* group sender-name colors: light = avatar initials color; dark = brightened.
+     Sampled: A130 light #357721 (= avatar fg), dark #54b537 (~1.55x); other dark values derived. */
+  --name-A100: var(--avatar-A100-fg);
+  --name-A110: var(--avatar-A110-fg);
+  --name-A120: var(--avatar-A120-fg);
+  --name-A130: var(--avatar-A130-fg);
+  --name-A140: var(--avatar-A140-fg);
+  --name-A150: var(--avatar-A150-fg);
+  --name-A160: var(--avatar-A160-fg);
+  --name-A170: var(--avatar-A170-fg);
+  --name-A180: var(--avatar-A180-fg);
+  --name-A190: var(--avatar-A190-fg);
+  --name-A200: var(--avatar-A200-fg);
+  --name-A210: var(--avatar-A210-fg);
+
   /* layout (CSS px, measured from 2x screenshots) */
   --nav-rail-width: 80px;
   --sidebar-width: 320px;
@@ -126,6 +141,19 @@
 
     --danger: #ec5946;
     --danger-bg: #3b2927;
+
+    --name-A100: #5757ff;
+    --name-A110: #3b7cff;
+    --name-A120: #4aa7f2;
+    --name-A130: #54b537;
+    --name-A140: #9232ff;
+    --name-A150: #f600ff;
+    --name-A160: #ff08c0;
+    --name-A170: #ff3927;
+    --name-A180: #c5a733;
+    --name-A190: #bfae6c;
+    --name-A200: #7a7aa9;
+    --name-A210: #8f8f8f;
   }
 }
 
@@ -160,4 +188,17 @@
 
   --danger: #ec5946;
   --danger-bg: #3b2927;
+
+  --name-A100: #5757ff;
+  --name-A110: #3b7cff;
+  --name-A120: #4aa7f2;
+  --name-A130: #54b537;
+  --name-A140: #9232ff;
+  --name-A150: #f600ff;
+  --name-A160: #ff08c0;
+  --name-A170: #ff3927;
+  --name-A180: #c5a733;
+  --name-A190: #bfae6c;
+  --name-A200: #7a7aa9;
+  --name-A210: #8f8f8f;
 }

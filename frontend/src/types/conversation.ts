@@ -45,6 +45,7 @@ export type ConversationDetail = ConversationSummary & {
   members: Member[];
   my_role: MemberRole;
   groups_in_common: string[];
+  last_read_message_id: number;
 };
 
 export type PreferenceChanges = Partial<Pick<ConversationSummary, "is_pinned" | "is_archived" | "muted_until">>;

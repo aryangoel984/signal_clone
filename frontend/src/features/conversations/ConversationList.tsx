@@ -1,12 +1,13 @@
 "use client";
 
-import { Archive, ArchiveRestore, Pin, PinOff } from "lucide-react";
+import { Archive, ArchiveRestore, CheckCheck, Pin, PinOff } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { type MouseEvent, useState } from "react";
 
 import { Menu, type MenuPosition } from "@/components/Menu";
 import { ApiError } from "@/lib/api";
 import { useConversations } from "@/store/conversations";
+import { useMessages } from "@/store/messages";
 import { showToast } from "@/store/toasts";
 import type { ConversationSummary } from "@/types/conversation";
 
@@ -20,6 +21,7 @@ type ConversationListProps = {
 export function ConversationList({ chats, emptyText }: ConversationListProps) {
   const pathname = usePathname();
   const setPreferences = useConversations((state) => state.setPreferences);
+  const markRead = useMessages((state) => state.markRead);
   const [menu, setMenu] = useState<{ chat: ConversationSummary; position: MenuPosition } | null>(null);
 
   function openMenu(event: MouseEvent, chat: ConversationSummary) {
@@ -54,6 +56,18 @@ export function ConversationList({ chats, emptyText }: ConversationListProps) {
           position={menu.position}
           onClose={() => setMenu(null)}
           items={[
+            ...(menu.chat.unread_count > 0 && menu.chat.last_message
+              ? [
+                  {
+                    label: "Mark as read",
+                    icon: CheckCheck,
+                    onSelect: () => {
+                      const lastId = menu.chat.last_message?.id;
+                      if (lastId) markRead(menu.chat.id, lastId).catch(() => showToast("Something went wrong"));
+                    },
+                  },
+                ]
+              : []),
             menu.chat.is_pinned
               ? { label: "Unpin chat", icon: PinOff, onSelect: () => update(menu.chat, { is_pinned: false }, "Chat unpinned") }
               : { label: "Pin chat", icon: Pin, onSelect: () => update(menu.chat, { is_pinned: true }, "Chat pinned") },
