@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./app.db"
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["http://localhost:3000"])
     demo_bots_enabled: bool = True
-    demo_bot_phones: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    demo_bot_phones: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["+15550000001", "+15550000002"]
+    )
 
     @field_validator("cors_origins", "demo_bot_phones", mode="before")
     @classmethod

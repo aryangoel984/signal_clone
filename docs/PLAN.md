@@ -7,18 +7,24 @@
 | Decision | Choice | Why |
 |---|---|---|
 | Primary keys | `INTEGER PRIMARY KEY AUTOINCREMENT` on every table that has a surrogate `id` | Simple to explain and debug. Message ids always increase, so the id works directly as the pagination cursor and the "catch up after reconnect" cursor. Ids are guessable, but every endpoint checks membership, so that doesn't matter. |
-| Id reuse | Every table with a surrogate `id` sets `__table_args__ = {"sqlite_autoincrement": True}` (via a shared mixin), so **ids are never reused** | Without `AUTOINCREMENT`, SQLite may hand out the id of the most recently deleted row again. A reused message id would break cursors, watermarks (`last_read_message_id`) and client caches keyed by id. The join tables (`contacts`, `blocks`, `conversation_members`, `message_receipts`, `reactions`, `user_settings`) have composite or FK primary keys and no surrogate id, so the option doesn't apply to them. |
+| Id reuse | **Every** table puts `SQLITE_TABLE_ARGS = {"sqlite_autoincrement": True}` (from `models/base.py`) in its `__table_args__`, so **ids are never reused**. A test fails if any table is missing it. | Without `AUTOINCREMENT`, SQLite may hand out the id of the most recently deleted row again. A reused message id would break cursors, watermarks (`last_read_message_id`) and client caches keyed by id. SQLAlchemy emits `AUTOINCREMENT` only for a single integer, non-FK primary key, so in the DDL it appears on the 5 surrogate-id tables (`users`, `sessions`, `conversations`, `messages`, `attachments`). On the composite- or FK-keyed tables the option is a verified no-op. |
 | ORM mode | **Async SQLAlchemy 2.x** (`AsyncSession` + `aiosqlite`), `async def` endpoints | The WebSocket manager, the REST handlers that broadcast, and the seed bot's delayed tasks all run on **one asyncio event loop**. No thread pool means no locks and no thread-to-loop bridging (see "Connection manager" in section 3). Cost: lazy loading is not allowed, so relationships are loaded explicitly with `selectinload()`. Sessions use `expire_on_commit=False`. Tests use `pytest-asyncio` and `httpx.AsyncClient`. |
 | Schema creation | `Base.metadata.create_all()` (run via `conn.run_sync`) + idempotent `seed.py` | The schema is greenfield and owned by one person. Alembic adds ceremony we don't need yet. If we need it after deploy, we add it then. |
-| Timestamps | UTC, stored as SQLAlchemy `DateTime` (ISO text in SQLite) | One timezone on the server. The frontend formats times for display. |
+| Timestamps | UTC, via the `UTCDateTime` column type (`core/time.py`): stored as naive UTC text, returned as timezone-aware UTC. Naive datetimes are rejected on write. | SQLite has no timezone support, and mixing naive and aware datetimes causes comparison bugs. Python code only ever sees aware UTC. The frontend formats times for display. |
 | Message status | Not stored on `messages`. Derived from `message_receipts` | One source of truth. Groups need per-member status anyway. `sending` exists only on the client. |
 | Writes vs push | REST for every persisted mutation. WS for server push and short-lived client events (typing) | REST gives validation, status codes and idempotency. WS stays a simple broadcast channel. |
 | Real-time scale | One process, in-memory connection manager (`uvicorn --workers 1`) | Enough for the demo. Stated as an assumption in the README. Redis pub/sub would be the next step. |
-| SQLite settings | `PRAGMA foreign_keys=ON`, `journal_mode=WAL` on every connection | FK enforcement. WAL lets reads run while a write is in progress. |
+| SQLite settings | A sync `"connect"` listener on `engine.sync_engine` (`core/db.py`) runs, in order: `busy_timeout=5000`, `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=NORMAL`, on **every** connection | `busy_timeout` comes first so the later pragmas wait for a lock instead of failing. `foreign_keys` is per-connection and off by default. WAL lets reads run while a write is in progress. The listener is sync because pool events fire on the sync engine; with aiosqlite it receives SQLAlchemy's sync-style adapter connection. |
 
 ## 1. SQLite schema
 
 Every table has `created_at`. Mutable tables also have `updated_at`. All FKs declare `ON DELETE` explicitly.
+
+Conventions (`app/models/`, one file per model):
+- **Constraint names** come from a naming convention (`pk_`, `fk_`, `uq_`, `ck_<table>_<name>`, `ix_`). Error messages and tests can refer to them.
+- **Enums** (`type`, `role`, `kind`, `theme`) are TEXT columns with a CHECK. They store the **lowercase values** (`'direct'`, `'group'`), not the Python member names (`values_callable` in `models/enums.py`).
+- **Relationships** are `lazy="raise"`. Queries load what they need with `selectinload()`. Parents use `passive_deletes=True`, so the database's `ON DELETE` rules do the deleting.
+- **Not a CHECK on purpose:** "text messages must have a sender". `messages.sender_id` is `ON DELETE SET NULL`, so that CHECK would make deleting a user fail.
 
 ### 1.1 `users`
 | Column | Type | Notes |
@@ -29,7 +35,7 @@ Every table has `created_at`. Mutable tables also have `updated_at`. All FKs dec
 | display_name | TEXT NULL | NULL until onboarding finishes. Lets the frontend send unfinished users to `/onboarding`. |
 | about | TEXT NULL | Signal's "About" line. |
 | avatar_url | TEXT NULL | Uploaded image path. NULL means show the initials avatar. |
-| avatar_color | TEXT NOT NULL | Token name (e.g. `ultramarine`, `crimson`) picked deterministically at signup. Stored so the color stays the same if the hash function ever changes. |
+| avatar_color | TEXT NOT NULL | Signal color token (`A100`…`A210`) picked deterministically from the phone number (`core/avatar_colors.py`). Stored so the color stays the same if the hash function ever changes. The actual colors live in the frontend theme. |
 | last_seen_at | DATETIME NULL | Set when the user's last socket disconnects. Shown as "last seen". |
 | created_at, updated_at | DATETIME | |
 
@@ -57,7 +63,7 @@ Why server-side sessions instead of JWT: logout really revokes the token, and th
 | typing_indicators_enabled | BOOLEAN NOT NULL DEFAULT 1 | |
 | notifications_enabled | BOOLEAN NOT NULL DEFAULT 1 | |
 | enter_key_sends | BOOLEAN NOT NULL DEFAULT 1 | Chats setting. |
-| updated_at | DATETIME | |
+| created_at, updated_at | DATETIME | |
 
 Why a separate table: settings change on their own schedule, and keeping them apart stops `users` turning into a catch-all. The row is created at signup.
 
@@ -88,7 +94,9 @@ Why one-directional: contacts are personal, as in Signal. A can save B without B
 | last_message_at | DATETIME NULL | **Denormalized.** Updated in the same transaction as each new message. The chat list sorts on it, so we avoid a `MAX()` over messages for every conversation. |
 | created_at, updated_at | DATETIME | |
 
-Indexes: `ix_conversations_last_message_at` for the sorted chat list. `UNIQUE(direct_key)`.
+Indexes: `ix_conversations_last_message_at`. `UNIQUE(direct_key)`.
+CHECKs: `(type = 'direct') = (direct_key IS NOT NULL)` (only DMs have a key), and `type = 'direct' OR name IS NOT NULL` (groups have a name).
+`last_message_at` is the conversation-wide newest message. Each member's chat-list position uses their own last *visible* message (1.6).
 Why one table for DMs and groups: messages, receipts and membership work the same for both, so one `messages.conversation_id` FK covers everything. Only the group admin rules differ.
 
 ### 1.6 `conversation_members`
@@ -97,16 +105,36 @@ Why one table for DMs and groups: messages, receipts and membership work the sam
 | conversation_id | INTEGER FK → conversations ON DELETE CASCADE | |
 | user_id | INTEGER FK → users ON DELETE CASCADE | |
 | role | TEXT NOT NULL DEFAULT 'member' | CHECK IN ('admin','member'). DM members are always 'member'. |
-| last_read_message_id | INTEGER NOT NULL DEFAULT 0 (**no FK**) | **Read watermark.** Unread count = messages with `id > watermark AND sender_id <> me AND kind = 'text'`. One integer per member, far cheaper than counting receipt rows. It is deliberately **not** a foreign key. With `ON DELETE SET NULL`, the disappearing-message sweeper deleting the watermark message would reset it to NULL and mark the whole history unread. As a plain integer it keeps its value. Ids are never reused (section 0), so a watermark pointing at a deleted id still splits read from unread correctly. It only moves forward (`max(current, new)`). On **join or re-add**, it is set to the conversation's current latest message id (`MAX(messages.id)`, or 0 if there are none), so a new member doesn't start with a pile of unread messages. |
-| history_start_id | INTEGER NOT NULL DEFAULT 0 | Exclusive lower bound on the message ids this member can see. 0 for DM members and founding group members. Set to the latest message id when someone is added to an existing group (see 7.1). |
-| history_end_id | INTEGER NULL | Inclusive upper bound, set to the latest message id when the member is removed or leaves. NULL while active. The history query is `id > history_start_id AND (history_end_id IS NULL OR id <= history_end_id)`, which still uses `ix_messages_conversation_id_id`. |
+| last_read_message_id | INTEGER NOT NULL DEFAULT 0 (**no FK**) | **Read watermark.** Unread count = *visible* messages (see "Visibility" below) with `id > watermark AND sender_id <> me AND kind = 'text'`. One integer per member, far cheaper than counting receipt rows. Sending a message also moves the sender's watermark to that message. It is deliberately **not** a foreign key. With `ON DELETE SET NULL`, the disappearing-message sweeper deleting the watermark message would reset it to NULL and mark the whole history unread. As a plain integer it keeps its value. Ids are never reused (section 0), so a watermark pointing at a deleted id still splits read from unread correctly. It only moves forward (`max(current, new)`). On **join or re-add**, it is set to the conversation's current latest message id (`MAX(messages.id)`, or 0 if there are none), so a new member doesn't start with a pile of unread messages. |
+| history_start_id | INTEGER NOT NULL DEFAULT 0 | Exclusive lower bound on the message ids this member can see. 0 for DM members and founding group members. When someone is added (or re-added), it's set to the latest message id *before* the "member_added" system message, so they see that message and everything after it (see 7.1). |
+| history_end_id | INTEGER NULL | Inclusive upper bound. Set to the id of the "member_removed" / "member_left" system message, so the member sees their own removal and nothing after it. NULL while active. |
 | is_pinned | BOOLEAN NOT NULL DEFAULT 0 | Per-user chat list preference |
 | is_archived | BOOLEAN NOT NULL DEFAULT 0 | Per-user |
 | muted_until | DATETIME NULL | Per-user. Controls notifications. |
 | joined_at | DATETIME NOT NULL | |
 | left_at | DATETIME NULL | **Soft removal.** A removed member keeps old history read-only (up to `history_end_id`) and can't send, as in Signal. Re-adding sets it back to NULL. "Active member" means `left_at IS NULL`. |
+| created_at, updated_at | DATETIME | |
 
-Keys: **composite PK (conversation_id, user_id)**. A user is in a conversation at most once, and re-adding is an UPDATE, not a new row. The UPDATE resets `left_at` and `history_end_id` to NULL, and sets `history_start_id` and `last_read_message_id` to the current latest id.
+Keys: **composite PK (conversation_id, user_id)**. A user is in a conversation at most once, and re-adding is an UPDATE, not a new row.
+CHECKs: `(left_at IS NULL) = (history_end_id IS NULL)` and `history_end_id IS NULL OR history_end_id >= history_start_id`.
+
+**Visibility** (`services/message_queries.py: visible_to`). A member sees a message only if:
+- `id > history_start_id AND (history_end_id IS NULL OR id <= history_end_id)`, **and**
+- it isn't from a user they blocked, sent at or after the block (7.2).
+
+The following are **all** bounded by this rule, never by the raw conversation:
+- history and pagination
+- the **unread count**
+- the **last-message preview**
+- **chat-list ordering**: a member's sort key is the `created_at` of their last visible message. A removed member's group stops moving up the list when others post.
+
+`conversations.last_message_at` is only a cheap shortcut for active members with no blocks. Checked by tests: Daniel, removed from "Weekend Trip", has unread = 0, and his preview is his own removal message.
+
+**Re-add rule.** Re-adding is an UPDATE that sets:
+- `left_at` and `history_end_id` back to NULL
+- `history_start_id` and `last_read_message_id` to the latest message id before the new "member_added" message
+
+So a re-added member does **not** see messages from the gap while they were away, and their history from before is hidden too (one visible range per member, 7.1).
 Indexes: the PK covers "members of conversation X". `ix_members_user_id` covers "all conversations of user Y", which is the chat list query.
 Why per-user prefs live here: pinned, archived, muted and unread are properties of *my membership*, not of the conversation.
 
@@ -125,7 +153,7 @@ Why per-user prefs live here: pinned, archived, muted and unread are properties 
 | created_at | DATETIME NOT NULL | Server time, which sets the order. |
 | deleted_at | DATETIME NULL | "Delete for everyone" leaves a tombstone instead of a hole. |
 
-Keys and constraints: `UNIQUE(sender_id, client_id)`. If a client retries a send after a network blip, the server returns the existing row instead of a duplicate.
+Keys and constraints: `UNIQUE(sender_id, client_id)`. If a client retries a send after a network blip, the server returns the existing row instead of a duplicate. NULL `client_id`s (system messages) never collide. CHECK `kind = 'system' OR system_data IS NULL`.
 Indexes:
 - `ix_messages_conversation_id_id (conversation_id, id)`. Serves history pagination (`WHERE conversation_id=? AND id<? ORDER BY id DESC LIMIT 50`), reconnect sync (`id > ?`), the last-message preview, and unread counts. Ids increase with time, so this index also gives time order. We don't need a separate `created_at` index.
 - `ix_messages_expires_at` partial `WHERE expires_at IS NOT NULL`. Used by the disappearing-message sweeper.
@@ -137,8 +165,9 @@ Indexes:
 | user_id | INTEGER FK → users ON DELETE CASCADE | The **recipient** (never the sender) |
 | delivered_at | DATETIME NULL | Set when the server pushes the message to one of the recipient's open sockets, or when the recipient next connects or fetches. |
 | read_at | DATETIME NULL | Set when the recipient's client reports the message as visible, **only if the reader has read receipts on** (see 7.4). |
+| created_at | DATETIME | |
 
-Keys: **composite PK (message_id, user_id)**. One row per recipient per message. Rows are created at send time for every active member except the sender.
+Keys: **composite PK (message_id, user_id)**. One row per recipient per message. Rows are created at send time for every active member except the sender, and only for `kind = 'text'` (system messages have no ticks). CHECK `read_at IS NULL OR delivered_at IS NOT NULL` (read implies delivered).
 Indexes: `ix_receipts_user_undelivered (user_id) WHERE delivered_at IS NULL` is a partial index. When a user connects, we find their pending deliveries without scanning delivered rows.
 Rows are **not** created for a recipient who has blocked the sender (see 7.2). With zero receipt rows, the status stays `sent`.
 Status the sender sees (computed): `sent` if there are no rows or any recipient has no `delivered_at`. `delivered` if all are delivered and any is unread. `read` if all have `read_at`. Groups work the same way, and per-member detail backs the "Message details" screen.
@@ -185,7 +214,7 @@ users 1─* sessions
 users 1─1 user_settings
 users 1─* contacts (owner) *─1 users (contact)
 users 1─* blocks (blocker) *─1 users (blocked)
-users *─* conversations   via conversation_members (role, watermark, prefs)
+users *─* conversations   via conversation_members (role, watermark, history_start_id/history_end_id, prefs)
 conversations 1─* messages *─1 users (sender)
 messages 1─* message_receipts *─1 users (recipient)
 messages 1─* reactions, 1─* attachments, 0..1 reply_to → messages
@@ -408,16 +437,16 @@ AppShell
 | # | Phase | Scope | Done when |
 |---|---|---|---|
 | 0 | **Scaffolding** | FastAPI app factory, config/env, CORS, `/health`. Next.js + TS strict + Tailwind + Inter. `theme.css` tokens (light/dark). `.env.example` files. | Both servers start. The frontend calls `/health`. |
-| 1 | **Schema & seed** | All SQLAlchemy models (section 1) with the `sqlite_autoincrement` mixin, async engine + SQLite pragmas, `create_all`. Idempotent `seed.py` (8+ users including the 2 bot users from section 8, 5+ DMs, 2+ groups, mixed statuses, unread). pytest async DB fixture. | Seed runs twice without duplicates. A schema test checks constraints (DM uniqueness, client_id idempotency, no id reuse after delete). |
+| 1 | **Schema & seed** | All SQLAlchemy models (section 1) with `SQLITE_TABLE_ARGS`, async engine + SQLite pragmas, `create_all` on startup. `python -m app.seed` (idempotent) and `python -m app.seed --reset` (destructive, manual only). Data is declared in `app/seed_data.py`, and receipts, watermarks and history ranges are *derived* from it. Messages are seeded only into conversations with none yet, so system messages (NULL `client_id`) can't duplicate. Includes the 2 bot users (section 8). | Seed runs twice (and with `--reset`) with identical row counts. pytest covers pragmas, autoincrement, enums, DM uniqueness, `client_id` idempotency, id reuse, cascades/SET NULL, CHECKs, receipts vs watermarks, unread counts, and history bounds. |
 | 2 | **Auth & onboarding** | OTP request/verify, sessions, `get_current_user` dependency, logout. Register/Verify/Onboarding pages, auth store, guard. | Log in as a seed user and as a new user. Session survives a reload. pytest auth tests pass. |
-| 2b | **Thin deploy (milestone)** | Deploy what exists so far. Backend on a host with a **persistent volume** (Railway volume or Fly.io volume mounted at `/data`, `DATABASE_URL=sqlite+aiosqlite:////data/app.db`, seed on boot if the DB is empty). Frontend on Vercel. Set `CORS_ORIGINS`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL`. No new features. | On the public URLs: `/health` responds, login with a seed phone + `123456` works, the session survives a reload, and data survives a backend redeploy (proves the volume works). This catches CORS, env, HTTPS and volume problems early instead of on the last day. |
+| 2b | **Thin deploy (milestone)** | Deploy what exists so far. Backend on a host with a **persistent volume** (Railway volume or Fly.io volume mounted at `/data`, `DATABASE_URL=sqlite+aiosqlite:////data/app.db`). **Seed on boot = the idempotent `python -m app.seed`**: it fills an empty DB completely and changes nothing in an existing one. A reset is allowed only when the `users` table is empty, and **never** as an unconditional `--reset` in the start command, which would wipe real data on every redeploy. Frontend on Vercel. Set `CORS_ORIGINS`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL`. No new features. | On the public URLs: `/health` responds, login with a seed phone + `123456` works, the session survives a reload, and data survives a backend redeploy (proves the volume works). This catches CORS, env, HTTPS and volume problems early instead of on the last day. |
 | 3 | **Shell, chat list & contacts** | NavRail/LeftPane/MainPane layout, conversation list endpoint (preview, unread, sorting), search, contacts CRUD, compose panel, get-or-create DM, empty state. | Matches the reference screenshots for the list and empty state. Adding a contact and starting a chat works. |
 | 4 | **1:1 messaging (REST)** | History pagination, send with `client_id`, optimistic bubbles, clusters, date separators, ConversationHero, composer, `/read` endpoint and watermark. | Messages persist and paginate. Retrying with the same client_id doesn't duplicate. pytest send/read tests pass. |
 | 5 | **Real-time** | WS manager + auth, `message.new`, delivery on push/connect, `message.status`, typing, presence, client reconnect + catch-up. Seed bot (section 8). Redeploy to the 2b hosts to confirm `wss://` works. | Two browsers: instant delivery, ✓ → ✓✓ → read, typing within ~300 ms, online/last-seen update, reconnect recovers missed messages. One browser: messaging a bot shows ✓✓ → read → typing → reply. |
 | 6 | **Groups** | Create group flow, members panel, add/remove/promote/leave with admin checks, system messages, `group.updated`, per-member receipts + Message details. | Three users in a group with everything in sync. pytest group permission tests pass. |
 | 7 | **Signal polish** | Settings pages (bound to `user_settings`), Coming Soon screens, toasts, context menus, hover actions, dark mode toggle, responsive single-pane mobile layout, screenshot diff against `docs/reference/`. | A side-by-side review against the references shows no obvious differences. |
 | 8 | **Bonus** (by value) | Reply/quote → reactions → attachments → disappearing messages (sweeper task) → keyboard shortcuts. | Each bonus feature works end to end. |
-| 9 | **Ship (final deploy)** | README (setup, architecture, ER/table list, API overview, assumptions, demo login, bot accounts). Final deploy to the same hosts as 2b: `app.db` and `uploads/` on the persistent volume, fresh reseed, and a smoke test of every core feature on the public URLs. | The public link works with seeded data, logging in with phone + `123456`, and a single-browser demo with a bot works end to end. |
+| 9 | **Ship (final deploy)** | README (setup, architecture, ER/table list, API overview, assumptions, demo login, bot accounts). Final deploy to the same hosts as 2b: `app.db` and `uploads/` on the persistent volume. Boot runs the idempotent seed. If a clean demo dataset is wanted, run `--reset` once **by hand** before submitting (never on boot). Then a smoke test of every core feature on the public URLs. | The public link works with seeded data, logging in with phone + `123456`, and a single-browser demo with a bot works end to end. |
 
 ## 6. Assumptions
 - One backend process (the in-memory WS manager). Horizontal scaling would need Redis pub/sub.
@@ -428,7 +457,7 @@ AppShell
 ## 7. Behaviour notes
 
 ### 7.1 Do new group members see earlier history?
-**No**, which matches Signal. A member added to an existing group gets `history_start_id` = the latest message id at that moment. They see the "Alice added you" system message and everything after it. A **removed or departed** member keeps read-only access to what they saw, up to `history_end_id`. A **re-added** member starts fresh from the re-add point. The history from their earlier stint is hidden too. That's a deliberate simplification: a single visible range per member keeps the query to one indexed range. Founding members (`POST /groups`) have `history_start_id = 0`.
+**No**, which matches Signal. A member added to an existing group gets `history_start_id` = the latest message id just before the "member_added" system message. They see "Alice added you" and everything after it. A **removed or departed** member keeps read-only access up to `history_end_id` (their own removal message). A **re-added** member gets `history_start_id` reset to the latest message id at the re-add, so they **don't see messages from the gap** while they were away. The history from their earlier stint is hidden too. That's a deliberate simplification: a single visible range per member keeps the query to one indexed range. Founding members (`POST /groups`) have `history_start_id = 0`.
 
 ### 7.2 Blocking (including non-contacts)
 Anyone can be blocked through `PUT /blocks/{user_id}`, from the chat header ⋯ menu or the conversation details panel, whether or not they're a contact. Effects, all enforced in services:

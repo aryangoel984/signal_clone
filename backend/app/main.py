@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import Settings, get_settings
+from app.core.db import Database, create_database, init_db
 from app.routers import health
 
 API_PREFIX = "/api/v1"
@@ -12,13 +13,17 @@ API_PREFIX = "/api/v1"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Startup/shutdown work (DB init, background tasks) is added in later phases.
+    database: Database = app.state.db
+    await init_db(database)
     yield
+    await database.engine.dispose()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Signal Clone API", lifespan=lifespan)
+    app.state.settings = settings
+    app.state.db = create_database(settings.database_url)
 
     app.add_middleware(
         CORSMiddleware,
