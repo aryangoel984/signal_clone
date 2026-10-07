@@ -1,0 +1,46 @@
+@import "tailwindcss";
+@import "../styles/theme.css";
+
+/* Expose theme tokens as Tailwind utilities (bg-chat, text-secondary, ...). */
+@theme inline {
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+
+  --color-sidebar: var(--bg-sidebar);
+  --color-chat: var(--bg-chat);
+  --color-card: var(--bg-card);
+  --color-search: var(--bg-search);
+  --color-composer: var(--bg-composer);
+  --color-selected: var(--bg-selected);
+  --color-button-secondary: var(--bg-button-secondary);
+
+  --color-bubble-incoming: var(--bubble-incoming);
+  --color-bubble-outgoing: var(--bubble-outgoing);
+  --color-on-bubble-incoming: var(--on-bubble-incoming);
+  --color-on-bubble-outgoing: var(--on-bubble-outgoing);
+
+  --color-border: var(--border);
+  --color-border-card: var(--border-card);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  --color-toggle-on: var(--toggle-on);
+  --color-toggle-off: var(--toggle-off);
+  --color-toggle-knob: var(--toggle-knob);
+
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --radius-bubble: var(--radius-bubble);
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+}
+
+body {
+  background: var(--bg-chat);
+  color: var(--text-primary);
+}
