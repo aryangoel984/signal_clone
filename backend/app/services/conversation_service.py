@@ -16,7 +16,7 @@ from app.schemas.conversation import (
     MemberOut,
     UpdatePreferencesRequest,
 )
-from app.services.message_queries import aggregate_status, last_visible_message, unread_count
+from app.services.message_queries import last_visible_message, statuses_for, unread_count
 from app.services.names import describe_system_message, display_names, user_ids_in
 from app.ws.realtime import Realtime
 
@@ -38,6 +38,7 @@ class _Context:
     """Everything about the viewer that every row needs, loaded once per request."""
 
     viewer_id: int
+    viewer: User
     read_receipts_on: bool
     contact_ids: set[int]
     realtime: Realtime
@@ -188,6 +189,7 @@ async def _load_context(session: AsyncSession, realtime: Realtime, viewer: User)
     )
     return _Context(
         viewer_id=viewer.id,
+        viewer=viewer,
         read_receipts_on=settings.read_receipts_enabled if settings else True,
         contact_ids=contact_ids,
         realtime=realtime,
@@ -248,7 +250,7 @@ async def _summarize(
         is_pinned=member.is_pinned,
         is_archived=member.is_archived,
         muted_until=member.muted_until,
-        is_active=member.left_at is None,
+        can_send=member.left_at is None,
         unread_count=await unread_count(session, member),
         last_message=await _last_message(session, context, last, names) if last else None,
         sort_at=last.created_at if last else conversation.created_at,
@@ -267,14 +269,9 @@ async def _last_message(
     else:
         text = message.body
 
-    status: MessageStatus | None = None
+    status = None
     if is_mine and not is_system:
-        receipts = (
-            await session.execute(select(MessageReceipt).where(MessageReceipt.message_id == message.id))
-        ).scalars().all()
-        status = aggregate_status(receipts)
-        if status is MessageStatus.READ and not context.read_receipts_on:
-            status = MessageStatus.DELIVERED  # receipts off: you don't see others' reads either (PLAN 7.4)
+        status = (await statuses_for(session, context.viewer, [message.id]))[message.id]
 
     return LastMessage(
         id=message.id,

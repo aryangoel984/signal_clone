@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.time import utc_now
 from app.models import Block, Contact, ConversationMember, Message, User, UserSettings
 from app.services import receipt_service
-from app.ws.events import MessageNew, MessageStatusChanged, PresenceUpdate, StatusUpdate, Typing, envelope
+from app.services.message_queries import statuses_for
+from app.ws.events import GroupUpdated, MessageNew, MessageStatusChanged, PresenceUpdate, StatusUpdate, Typing, envelope
 from app.ws.manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
@@ -80,9 +81,10 @@ class Realtime:
 
     # --- messages and receipts -----------------------------------------------------------
 
-    async def message_created(self, message_id: int) -> None:
+    async def message_created(self, message_id: int, extra_recipient_ids: tuple[int, ...] = ()) -> None:
         """message.new to every active member (worded for each), then mark it delivered for
-        recipients whose socket received it and tell the sender."""
+        recipients whose socket received it and tell the sender. `extra_recipient_ids` adds
+        people who are no longer members but must see this one (their own removal)."""
         from app.services.message_service import serialize  # local import: message_service imports this module's types
 
         async with self._sessions() as session:
@@ -92,7 +94,10 @@ class Realtime:
             rows = await session.execute(
                 select(User)
                 .join(ConversationMember, ConversationMember.user_id == User.id)
-                .where(ConversationMember.conversation_id == message.conversation_id, ConversationMember.left_at.is_(None))
+                .where(
+                    ConversationMember.conversation_id == message.conversation_id,
+                    (ConversationMember.left_at.is_(None)) | (ConversationMember.user_id.in_(extra_recipient_ids)),
+                )
             )
             members = list(rows.scalars())
             blocked_sender = set(
@@ -127,8 +132,6 @@ class Realtime:
         """message.status to the senders of these messages, with their new aggregate status."""
         if not message_ids:
             return
-        from app.services.message_service import statuses_for
-
         async with self._sessions() as session:
             rows = await session.execute(
                 select(Message.id, Message.sender_id, Message.conversation_id).where(Message.id.in_(message_ids))
@@ -148,6 +151,29 @@ class Realtime:
                         sender_id,
                         envelope("message.status", MessageStatusChanged(conversation_id=conversation_id, updates=updates)),
                     )
+
+    # --- groups ------------------------------------------------------------------------------
+
+    async def group_updated(
+        self,
+        conversation_id: int,
+        change: str,
+        actor_id: int,
+        target_ids: list[int],
+        extra_recipient_ids: tuple[int, ...] = (),
+    ) -> None:
+        """group.updated to active members plus e.g. someone just removed; clients refetch."""
+        async with self._sessions() as session:
+            members = (
+                await session.execute(
+                    select(ConversationMember.user_id).where(
+                        ConversationMember.conversation_id == conversation_id, ConversationMember.left_at.is_(None)
+                    )
+                )
+            ).scalars()
+            recipients = set(members) | set(extra_recipient_ids)
+        event = GroupUpdated(conversation_id=conversation_id, change=change, actor_id=actor_id, target_ids=target_ids)
+        await self.manager.send_many(recipients, envelope("group.updated", event))
 
     # --- typing ------------------------------------------------------------------------------
 

@@ -9,6 +9,7 @@ import { useAuthStore } from "@/store/auth";
 import { useConversations } from "@/store/conversations";
 import { useMessages } from "@/store/messages";
 import { usePresenceStore } from "@/store/presence";
+import { useRevisions } from "@/store/revisions";
 import { useTyping } from "@/store/typing";
 import type { ServerEvent } from "@/types/realtime";
 
@@ -36,6 +37,10 @@ function handle(event: ServerEvent): void {
         online: event.payload.online,
         lastSeenAt: event.payload.last_seen_at,
       });
+      break;
+    case "group.updated":
+      useRevisions.getState().bump(event.payload.conversation_id);
+      useConversations.getState().refreshSoon();
       break;
     case "error":
     case "pong":

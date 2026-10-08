@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.core.deps import CurrentUser, DbSession, RealtimeDep
-from app.schemas.message import MessageOut, MessagePage, ReadRequest, SendMessageRequest
+from app.schemas.message import MessageDetails, MessageOut, MessagePage, ReadRequest, SendMessageRequest
 from app.services import message_service, receipt_service
 from app.services.conversation_service import ConversationNotFoundError, load_membership
 
@@ -58,3 +58,16 @@ async def mark_read(
         raise _NOT_FOUND from None
     changed = await receipt_service.mark_read(db, user, member, body.up_to_message_id)
     await realtime.statuses_changed(changed)  # after the commit inside mark_read
+
+
+details_router = APIRouter(prefix="/messages", tags=["messages"])
+
+
+@details_router.get("/{message_id}/receipts")
+async def message_details(message_id: int, user: CurrentUser, db: DbSession) -> MessageDetails:
+    try:
+        return await message_service.get_details(db, user, message_id)
+    except message_service.MessageNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Message not found") from None
+    except message_service.NotSenderError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only the sender can see message details") from None

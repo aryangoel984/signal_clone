@@ -5,6 +5,8 @@ import { useLeftPane } from "@/store/left-pane";
 import { ArchivePanel } from "./ArchivePanel";
 import { ChatListPanel } from "./ChatListPanel";
 import { ComposePanel } from "./ComposePanel";
+import { NewGroupPanel } from "@/features/groups/NewGroupPanel";
+
 import { FindByPhonePanel, FindByUsernamePanel } from "./FindPanels";
 
 const PANELS = {
@@ -13,6 +15,7 @@ const PANELS = {
   compose: ComposePanel,
   findUsername: FindByUsernamePanel,
   findPhone: FindByPhonePanel,
+  newGroup: NewGroupPanel,
 } as const;
 
 /** The left column of the Chats section; Signal swaps its content in place. */

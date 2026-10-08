@@ -227,9 +227,11 @@ def test_typing_is_relayed_to_others_only(live: TestClient) -> None:
         mine = drain(alex_ws)
         theirs = drain(priya_ws)
 
-    assert [e["type"] for e in theirs] == ["typing.start", "typing.stop"]
-    assert theirs[0]["payload"] == {"conversation_id": dm, "user_id": alex_id}
-    assert mine == []
+    their_typing = [e for e in theirs if e["type"].startswith("typing.")]
+    assert [e["type"] for e in their_typing] == ["typing.start", "typing.stop"]
+    assert their_typing[0]["payload"] == {"conversation_id": dm, "user_id": alex_id}
+    # Only typing matters here: Priya's "online" event may land in Alex's batch, depending on timing.
+    assert [e for e in mine if e["type"].startswith("typing.")] == []
 
 
 def test_typing_in_foreign_conversation_is_an_error(live: TestClient) -> None:
@@ -268,3 +270,39 @@ def test_bot_delivers_reads_types_and_replies(live: TestClient) -> None:
     assert seen == ["delivered", "read", "typing.start", "typing.stop"]
     assert reply["text"] == "Hey there! 👋"
     assert reply["sender_name"] == "Maya (bot)"
+
+
+# --- groups ------------------------------------------------------------------------------------------
+
+
+def test_new_group_reaches_members_live(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+
+    with live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(priya_ws)
+        group = live.post(
+            "/api/v1/groups", headers=auth(alex), json={"name": "Live Group", "member_ids": [me(live, priya)]}
+        ).json()
+        events = drain(priya_ws)
+
+    assert of_type(events, "message.new")[0]["message"]["text"] == "Alex Rivera created the group."
+    assert of_type(events, "group.updated")[0]["conversation_id"] == group["id"]
+
+
+def test_removed_member_gets_removal_but_nothing_after(live: TestClient) -> None:
+    alex, marcus = token(live, ALEX), token(live, "+15550100003")
+    trip = chat(live, alex, "Weekend Trip")["id"]
+    marcus_id = me(live, marcus)
+
+    with live.websocket_connect(f"/ws?token={marcus}") as marcus_ws:
+        drain(marcus_ws)
+        live.delete(f"/api/v1/groups/{trip}/members/{marcus_id}", headers=auth(alex))
+        removal = drain(marcus_ws)
+        send(live, alex, trip, "Marcus shouldn't get this", "ws-test-0101")
+        after = drain(marcus_ws)
+
+    assert [m["message"]["text"] for m in of_type(removal, "message.new")] == ["Alex Rivera removed you."]
+    assert of_type(removal, "group.updated") == [
+        {"conversation_id": trip, "change": "member_removed", "actor_id": me(live, alex), "target_ids": [marcus_id]}
+    ]
+    assert after == []

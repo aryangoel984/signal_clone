@@ -1,6 +1,5 @@
 """Message history and sending (PLAN 1.7, 1.8, section 2 "Messages")."""
 
-from collections import defaultdict
 from collections.abc import Sequence
 
 from sqlalchemy import exists, select
@@ -9,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
 from app.models import Block, ConversationMember, Message, MessageReceipt, User, UserSettings
-from app.models.enums import MessageKind, MessageStatus
-from app.schemas.message import MessageOut, MessagePage
-from app.services.conversation_service import load_membership
-from app.services.message_queries import aggregate_status, visible_to
+from app.models.enums import MessageKind
+from app.schemas.message import MessageDetails, MessageOut, MessagePage, Recipient
+from app.services.conversation_service import ConversationNotFoundError, load_membership
+from app.services.message_queries import current_member_receipts, statuses_for, visible_to
 from app.services.names import describe_system_message, display_names, user_ids_in
 from app.ws.realtime import Realtime
 
@@ -23,6 +22,14 @@ class NotActiveMemberError(Exception):
 
 class ClientIdConflictError(Exception):
     """The client_id was already used by this sender in a different conversation."""
+
+
+class MessageNotFoundError(Exception):
+    pass
+
+
+class NotSenderError(Exception):
+    pass
 
 
 async def list_messages(
@@ -166,20 +173,35 @@ async def _recipient_ids(session: AsyncSession, conversation_id: int, sender_id:
     return list(rows.scalars())
 
 
-async def statuses_for(session: AsyncSession, viewer: User, message_ids: list[int]) -> dict[int, MessageStatus]:
-    if not message_ids:
-        return {}
-    receipts = (await session.execute(select(MessageReceipt).where(MessageReceipt.message_id.in_(message_ids)))).scalars()
-    by_message: defaultdict[int, list[MessageReceipt]] = defaultdict(list)
-    for receipt in receipts:
-        by_message[receipt.message_id].append(receipt)
-    settings = await session.get(UserSettings, viewer.id)
-    receipts_on = settings is None or settings.read_receipts_enabled
+async def get_details(session: AsyncSession, viewer: User, message_id: int) -> MessageDetails:
+    """"Message details" for the sender: each current member's delivered/read time.
+    404 if the viewer can't see the message, 403 if they can but didn't send it."""
+    message = await session.get(Message, message_id)
+    if message is None or message.kind is not MessageKind.TEXT:
+        raise MessageNotFoundError
+    try:
+        member, _ = await load_membership(session, viewer.id, message.conversation_id)
+    except ConversationNotFoundError:
+        raise MessageNotFoundError from None
+    if not await session.scalar(select(Message.id).where(Message.id == message_id, visible_to(member))):
+        raise MessageNotFoundError
+    if message.sender_id != viewer.id:
+        raise NotSenderError
 
-    statuses: dict[int, MessageStatus] = {}
-    for message_id in message_ids:
-        status = aggregate_status(by_message[message_id])
-        if status is MessageStatus.READ and not receipts_on:
-            status = MessageStatus.DELIVERED  # PLAN 7.4: you don't see reads when yours are off
-        statuses[message_id] = status
-    return statuses
+    receipts = (await session.execute(current_member_receipts([message_id]))).scalars().all()
+    users = {u.id: u for u in (await session.execute(select(User).where(User.id.in_([r.user_id for r in receipts])))).scalars()}
+    names = await display_names(session, viewer.id, users)
+    settings = await session.get(UserSettings, viewer.id)
+    show_reads = settings is None or settings.read_receipts_enabled
+    recipients = [
+        Recipient(
+            user_id=r.user_id,
+            name=names[r.user_id],
+            avatar_color=users[r.user_id].avatar_color,
+            avatar_url=users[r.user_id].avatar_url,
+            delivered_at=r.delivered_at,
+            read_at=r.read_at if show_reads else None,
+        )
+        for r in receipts
+    ]
+    return MessageDetails(message_id=message_id, sent_at=message.created_at, recipients=sorted(recipients, key=lambda r: r.name.casefold()))

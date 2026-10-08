@@ -10,6 +10,10 @@ export type ServerEvent =
     }
   | { type: "typing.start" | "typing.stop"; payload: { conversation_id: number; user_id: number } }
   | { type: "presence.update"; payload: { user_id: number; online: boolean; last_seen_at: string | null } }
+  | {
+      type: "group.updated";
+      payload: { conversation_id: number; change: string; actor_id: number; target_ids: number[] };
+    }
   | { type: "error"; payload: { detail: string } }
   | { type: "pong"; payload: Record<string, never> };
 

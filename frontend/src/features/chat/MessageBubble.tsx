@@ -1,7 +1,13 @@
+import { Copy, Ellipsis, Info } from "lucide-react";
+import { useState } from "react";
+
 import { Avatar } from "@/components/Avatar";
+import { IconButton } from "@/components/IconButton";
+import { belowElement, Menu, type MenuPosition } from "@/components/Menu";
 import { StatusTicks } from "@/components/StatusTicks";
 import { formatBubbleTime } from "@/lib/format-time";
 import { nameColor } from "@/lib/name-color";
+import { showToast } from "@/store/toasts";
 import type { ChatMessage } from "@/types/message";
 
 type MessageBubbleProps = {
@@ -12,11 +18,14 @@ type MessageBubbleProps = {
   last: boolean;
   isGroup: boolean;
   onRetry: (clientId: string) => void;
+  onShowDetails: (messageId: number) => void;
 };
 
 const AVATAR_SIZE = 28;
 
-export function MessageBubble({ message, mine, first, last, isGroup, onRetry }: MessageBubbleProps) {
+export function MessageBubble({ message, mine, first, last, isGroup, onRetry, onShowDetails }: MessageBubbleProps) {
+  const [menu, setMenu] = useState<MenuPosition | null>(null);
+  const confirmed = message.id > 0 && !message.localStatus;
   const showGroupDetails = isGroup && !mine;
   const status = message.localStatus === "sending" ? "sending" : message.status;
 
@@ -26,7 +35,16 @@ export function MessageBubble({ message, mine, first, last, isGroup, onRetry }: 
     : `${first ? "" : "rounded-tl-[4px]"} ${last ? "" : "rounded-bl-[4px]"}`;
 
   return (
-    <div className={`flex items-end gap-2 ${mine ? "justify-end" : "justify-start"} ${first ? "mt-3" : "mt-0.5"}`}>
+    <div className={`group flex items-end gap-2 ${mine ? "justify-end" : "justify-start"} ${first ? "mt-3" : "mt-0.5"}`}>
+      {mine && confirmed && (
+        <IconButton
+          icon={Ellipsis}
+          size={16}
+          label="Message actions"
+          className="self-center text-text-secondary opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+          onClick={(event) => setMenu(belowElement(event.currentTarget))}
+        />
+      )}
       {showGroupDetails &&
         (last ? (
           <Avatar name={message.sender_name} color={message.sender_avatar_color ?? "A210"} imageUrl={message.sender_avatar_url} size={AVATAR_SIZE} />
@@ -65,6 +83,20 @@ export function MessageBubble({ message, mine, first, last, isGroup, onRetry }: 
           </button>
         )}
       </div>
+      {menu && (
+        <Menu
+          position={menu}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: "Message details", icon: Info, onSelect: () => onShowDetails(message.id) },
+            {
+              label: "Copy text",
+              icon: Copy,
+              onSelect: () => void navigator.clipboard.writeText(message.text).then(() => showToast("Copied")),
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }

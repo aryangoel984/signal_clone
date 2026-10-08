@@ -4,8 +4,10 @@ import type { Member } from "@/types/conversation";
 
 /** Incoming-style bubble with animated dots; in groups, the typists' avatars beside it. */
 export function TypingIndicator({ members }: { members: Member[] }) {
+  const who = members.map((member) => member.name).join(", ");
+  const label = members.length === 0 ? "Typing" : `${who} ${members.length === 1 ? "is" : "are"} typing`;
   return (
-    <div className="mt-3 flex items-end gap-2" aria-live="polite">
+    <div className="mt-3 flex items-end gap-2" aria-live="polite" aria-label={label} title={label}>
       {members.length > 0 && (
         <span className="flex -space-x-2">
           {members.slice(0, 3).map((member) => (

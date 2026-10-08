@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from app.core.deps import AppSettings, CurrentUser, DbSession
 from app.schemas.contact import UserPublic
 from app.schemas.user import MeResponse, UpdateMeRequest
-from app.services import contact_service, user_service
+from app.services import contact_service, media, user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -28,9 +28,9 @@ async def update_me(body: UpdateMeRequest, user: CurrentUser, db: DbSession) -> 
 async def upload_avatar(file: UploadFile, user: CurrentUser, db: DbSession, settings: AppSettings) -> MeResponse:
     try:
         updated = await user_service.set_avatar(db, user, file, settings.uploads_dir)
-    except user_service.AvatarTooLargeError:
+    except media.ImageTooLargeError:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, detail="Avatar must be 5 MB or smaller") from None
-    except user_service.UnsupportedImageError:
+    except media.UnsupportedImageError:
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Avatar must be a JPEG, PNG or WebP image"
         ) from None

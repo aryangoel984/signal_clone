@@ -31,7 +31,7 @@ class ConversationSummary(BaseModel):
     is_pinned: bool
     is_archived: bool
     muted_until: datetime | None
-    is_active: bool  # False once I was removed from / left a group
+    can_send: bool  # False once I was removed from / left a group (history stays readable)
     unread_count: int
     last_message: LastMessage | None
     sort_at: datetime  # created_at of my last visible message (or the conversation's creation)

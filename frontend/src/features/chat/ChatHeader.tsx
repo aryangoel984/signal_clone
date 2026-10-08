@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, ArchiveRestore, Ellipsis, Phone, Pin, PinOff, Search, UserRoundPlus, Video } from "lucide-react";
+import { Archive, ArchiveRestore, Ellipsis, Phone, Pin, PinOff, Search, Settings, UserRoundPlus, Video } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -16,9 +16,10 @@ import type { ConversationDetail } from "@/types/conversation";
 type ChatHeaderProps = {
   conversation: ConversationDetail;
   onChanged: (conversation: ConversationDetail) => void;
+  onOpenSettings: () => void; // groups: the Group settings view
 };
 
-export function ChatHeader({ conversation, onChanged }: ChatHeaderProps) {
+export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHeaderProps) {
   const setPreferences = useConversations((state) => state.setPreferences);
   const loadChats = useConversations((state) => state.loadChats);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
@@ -46,6 +47,7 @@ export function ChatHeader({ conversation, onChanged }: ChatHeaderProps) {
     }, "Added to contacts");
 
   const items: MenuItem[] = [
+    ...(isGroup ? [{ label: "Group settings", icon: Settings, onSelect: onOpenSettings }] : []),
     ...(!isGroup && conversation.is_contact === false
       ? [{ label: "Add to contacts", icon: UserRoundPlus, onSelect: () => void addToContacts() }]
       : []),
@@ -65,7 +67,15 @@ export function ChatHeader({ conversation, onChanged }: ChatHeaderProps) {
     <header className="relative z-10 flex h-[52px] shrink-0 items-center gap-3 bg-chat px-4 shadow-[0_2px_10px_var(--header-shadow)]">
       <Avatar name={conversation.title} color={conversation.avatar_color} imageUrl={conversation.avatar_url} size={32} isGroup={isGroup} />
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-sm font-semibold text-text-primary">{conversation.title}</h1>
+        {isGroup ? (
+          <h1 className="truncate text-sm font-semibold text-text-primary">
+            <button type="button" onClick={onOpenSettings} className="hover:underline" title="Group settings">
+              {conversation.title}
+            </button>
+          </h1>
+        ) : (
+          <h1 className="truncate text-sm font-semibold text-text-primary">{conversation.title}</h1>
+        )}
         {subtitle && <p className="truncate text-xs text-text-secondary">{subtitle}</p>}
       </div>
       <div className="flex items-center gap-2">

@@ -39,3 +39,20 @@ class SendMessageRequest(BaseModel):
 
 class ReadRequest(BaseModel):
     up_to_message_id: int
+
+
+class Recipient(BaseModel):
+    """One row of "Message details": a current member and what happened on their side."""
+
+    user_id: int
+    name: str
+    avatar_color: str
+    avatar_url: str | None
+    delivered_at: datetime | None
+    read_at: datetime | None  # hidden (null) when the sender has read receipts off
+
+
+class MessageDetails(BaseModel):
+    message_id: int
+    sent_at: datetime
+    recipients: list[Recipient]

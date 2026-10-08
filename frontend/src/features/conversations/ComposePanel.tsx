@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { apiRequest } from "@/lib/api";
 import { useLeftPane } from "@/store/left-pane";
-import { COMING_SOON, showToast } from "@/store/toasts";
+import { showToast } from "@/store/toasts";
 import type { UserPublic } from "@/types/contact";
 
 import { PaneHeader, SearchField } from "./PaneHeader";
@@ -50,7 +50,7 @@ export function ComposePanel() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!searching && (
           <ul className="px-3 pt-1">
-            <ActionRow icon={Users} label="New group" onClick={() => showToast(COMING_SOON)} />
+            <ActionRow icon={Users} label="New group" onClick={() => setMode("newGroup")} />
             <ActionRow icon={AtSign} label="Find by username" onClick={() => setMode("findUsername")} />
             <ActionRow icon={Hash} label="Find by phone number" onClick={() => setMode("findPhone")} />
           </ul>

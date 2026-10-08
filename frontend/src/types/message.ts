@@ -19,3 +19,17 @@ export type MessagePage = { items: Message[]; next_cursor: number | null };
 
 /** A message in the UI: server messages plus my optimistic ones that aren't confirmed yet. */
 export type ChatMessage = Message & { localStatus?: "sending" | "failed" };
+
+/** Mirrors backend `MessageDetails` (GET /messages/{id}/receipts, sender only). */
+export type MessageDetails = {
+  message_id: number;
+  sent_at: string;
+  recipients: {
+    user_id: number;
+    name: string;
+    avatar_color: string;
+    avatar_url: string | null;
+    delivered_at: string | null;
+    read_at: string | null;
+  }[];
+};

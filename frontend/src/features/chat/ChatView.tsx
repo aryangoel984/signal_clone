@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 
+import { GroupSettings } from "@/features/groups/GroupSettings";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useAuthStore } from "@/store/auth";
 import { useMessages } from "@/store/messages";
+import { useRevisions } from "@/store/revisions";
 import type { ConversationDetail } from "@/types/conversation";
 
 import { ChatHeader } from "./ChatHeader";
@@ -15,12 +17,15 @@ type LoadState =
   | { kind: "ready"; conversation: ConversationDetail; lastReadAtOpen: number }
   | { kind: "error"; message: string };
 
-/** One open conversation: header, timeline and composer. Remounted per conversation (keyed by id). */
+/** One open conversation: header, timeline and composer, or the group settings view.
+ *  Remounted per conversation (keyed by id). */
 export function ChatView({ conversationId }: { conversationId: number }) {
   const me = useAuthStore((state) => state.user);
   const loadLatest = useMessages((state) => state.loadLatest);
   const send = useMessages((state) => state.send);
+  const revision = useRevisions((state) => state.byConversation[conversationId] ?? 0);
   const [state, setState] = useState<LoadState | null>(null);
+  const [view, setView] = useState<"chat" | "settings">("chat");
 
   useEffect(() => {
     let cancelled = false;
@@ -38,24 +43,40 @@ export function ChatView({ conversationId }: { conversationId: number }) {
     };
   }, [conversationId, loadLatest]);
 
+  // group.updated (rename, members, roles, my removal): refetch the details in place.
+  useEffect(() => {
+    if (revision === 0) return;
+    let cancelled = false;
+    apiRequest<ConversationDetail>(`/conversations/${conversationId}`)
+      .then((conversation) => {
+        if (!cancelled) setState((current) => (current?.kind === "ready" ? { ...current, conversation } : current));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, revision]);
+
   if (state === null || !me) return <div className="flex-1 bg-chat" aria-busy="true" />;
   if (state.kind === "error") {
     return <div className="flex flex-1 items-center justify-center bg-chat text-sm text-text-secondary">{state.message}</div>;
   }
 
   const { conversation } = state;
+  const update = (updated: ConversationDetail) => setState({ ...state, conversation: updated });
+
+  if (view === "settings" && conversation.type === "group") {
+    return <GroupSettings conversation={conversation} myId={me.id} onBack={() => setView("chat")} onChanged={update} />;
+  }
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-chat">
-      <ChatHeader
-        conversation={conversation}
-        onChanged={(updated) => setState({ ...state, conversation: updated })}
-      />
+      <ChatHeader conversation={conversation} onChanged={update} onOpenSettings={() => setView("settings")} />
       <Timeline conversation={conversation} myId={me.id} lastReadAtOpen={state.lastReadAtOpen} />
       <Composer
         conversationId={conversationId}
         onSend={(text) => void send(conversationId, text, me)}
         disabledReason={
-          conversation.is_active ? undefined : "You can't send messages to this group because you're no longer a member."
+          conversation.can_send ? undefined : "You can't send messages to this group because you're no longer a member."
         }
       />
     </div>

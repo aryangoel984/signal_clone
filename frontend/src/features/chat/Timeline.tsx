@@ -10,6 +10,7 @@ import type { ConversationDetail } from "@/types/conversation";
 import { buildRows, unreadMarker } from "./build-rows";
 import { ConversationHero } from "./ConversationHero";
 import { MessageBubble } from "./MessageBubble";
+import { MessageDetailsModal } from "./MessageDetailsModal";
 import { DateSeparator, SystemMessage, UnreadDivider } from "./TimelineMarkers";
 import { TypingIndicator } from "./TypingIndicator";
 
@@ -35,6 +36,7 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
   const positioned = useRef(false);
   const lastCount = useRef(0);
   const [showJump, setShowJump] = useState(false);
+  const [detailsFor, setDetailsFor] = useState<number | null>(null);
 
   const items = useMemo(() => thread?.items ?? [], [thread]);
   const [marker] = useState(() => unreadMarker(items, myId, lastReadAtOpen)); // messages are loaded before mount
@@ -135,6 +137,7 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
                   last={row.last}
                   isGroup={conversation.type === "group"}
                   onRetry={(clientId) => void retry(conversationId, clientId)}
+                  onShowDetails={setDetailsFor}
                 />
               );
           }
@@ -145,6 +148,7 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
           />
         )}
       </div>
+      {detailsFor !== null && <MessageDetailsModal messageId={detailsFor} onClose={() => setDetailsFor(null)} />}
       {showJump && (
         <button
           type="button"

@@ -29,7 +29,7 @@ export type ConversationSummary = {
   is_pinned: boolean;
   is_archived: boolean;
   muted_until: string | null;
-  is_active: boolean;
+  can_send: boolean; // false once I was removed from / left a group (history stays readable)
   unread_count: number;
   last_message: LastMessage | null;
   sort_at: string;

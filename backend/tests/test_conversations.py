@@ -100,7 +100,7 @@ async def test_removed_member_sees_list_bounded_by_history(client: AsyncClient, 
 
     assert trip["last_message"]["text"] == "Alex Rivera removed you."
     assert trip["unread_count"] == 0
-    assert trip["is_active"] is False
+    assert trip["can_send"] is False
     assert [chat["title"] for chat in chats] == ["Alex Rivera", "Weekend Trip"]  # trip sorts by his removal
 
 

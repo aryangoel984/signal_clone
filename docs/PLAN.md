@@ -171,7 +171,7 @@ Indexes:
 Keys: **composite PK (message_id, user_id)**. One row per recipient per message. Rows are created at send time for every active member except the sender, and only for `kind = 'text'` (system messages have no ticks). CHECK `read_at IS NULL OR delivered_at IS NOT NULL` (read implies delivered).
 Indexes: `ix_receipts_user_undelivered (user_id) WHERE delivered_at IS NULL` is a partial index. When a user connects, we find their pending deliveries without scanning delivered rows.
 Rows are **not** created for a recipient who has blocked the sender (see 7.2). With zero receipt rows, the status stays `sent`.
-Status the sender sees (computed): `sent` if there are no rows or any recipient has no `delivered_at`. `delivered` if all are delivered and any is unread. `read` if all have `read_at`. Groups work the same way, and per-member detail backs the "Message details" screen.
+Status the sender sees (computed from **current members' receipts only**: someone who was removed or left can't hold a tick back; `message_queries.statuses_for`, tested): `sent` if there are no rows or any recipient has no `delivered_at`. `delivered` if all are delivered and any is unread. `read` if all have `read_at`. Groups work the same way, and per-member detail backs the "Message details" screen.
 Why both a watermark and receipts: the watermark (1.6) answers "how many unread?" cheaply. Receipts answer "who has read *this* message?". Marking messages read updates both in one transaction.
 
 ### 1.9 `reactions` (bonus)
@@ -303,7 +303,7 @@ Media: `/media/*` serves `UPLOADS_DIR` through `MediaFiles` (`core/media.py`), a
 |---|---|---|
 | GET | `/conversations?archived=false` | Chat list (`ConversationSummary`): `id, type, title, avatar_url, avatar_color, other_user_id, is_contact` (DMs), `member_count, is_pinned, is_archived, muted_until, is_active, unread_count, sort_at`, and `last_message {id, kind, text, sender_id, sender_name, created_at, status}`. `status` is only set on my own text messages (capped at `delivered` if my read receipts are off). `sender_name` is null for mine. System-message `text` is worded for the viewer on the server (`services/names.py`: "You created the group.", "Alex Rivera removed you."). Preview, unread count and `sort_at` use only messages visible to me (1.6). Sorted pinned first, then `sort_at` desc. Empty DMs are hidden (7.3). About 3 small indexed queries per conversation, fine at demo scale. **Loading the list also marks all my pending receipts delivered** (`receipt_service.mark_all_delivered`, uses the partial index). That's the "client received it" signal until the WebSocket connect/push paths exist in phase 5. |
 | POST | `/conversations/direct` | `{user_id}`, get-or-create via `direct_key`. 201 if created, 200 if it already existed. 400 for yourself, 404 for an unknown user. A race on the UNIQUE key is caught and returns the existing DM. The new DM can be opened right away but only appears in either user's list after the first message. |
-| GET | `/conversations/{id}` | Summary fields plus `last_read_message_id` (my watermark, for the unread divider), active members (`name` is "You" for me), `my_role`, and for DMs `groups_in_common` (names of groups both people are active in, for the "Member of …" line). Works for former members too (`is_active: false`). 404 if never a member. |
+| GET | `/conversations/{id}` | Summary fields plus `last_read_message_id` (my watermark, for the unread divider), active members (`name` is "You" for me), `my_role`, and for DMs `groups_in_common` (names of groups both people are active in, for the "Member of …" line). **Former members get 200** with `can_send: false` (history capped at `history_end_id`). **Only people who were never members get 404.** 404 if never a member. |
 | PATCH | `/conversations/{id}/preferences` | `{is_pinned?, is_archived?, muted_until?}` (my membership only) |
 | POST | `/conversations/{id}/read` | `{up_to_message_id}`, clamped to the newest message visible to me, and the watermark never moves backward. Always sets `delivered_at` on my receipts up to there (a message on screen has been delivered). Sets `read_at` (and, from phase 5, pushes `message.status`) **only if my read receipts are on** (7.4). Returns 204. |
 
@@ -314,20 +314,21 @@ Media: `/media/*` serves `UPLOADS_DIR` through `MediaFiles` (`core/media.py`), a
 | GET | `/conversations/{id}/messages?after=<id>` | Messages newer than `after`, oldest first (catch-up after a reconnect), up to `limit`. |
 | POST | `/conversations/{id}/messages` | `{client_id, body}`. `body` trimmed, 1–4000 characters, inner newlines kept. `client_id` `^[A-Za-z0-9_\-:]{8,64}$`. One transaction: insert the message, add a receipt row for each active member except me (and anyone who blocked me), update `last_message_at`, move **my** watermark to the new id. Returns 201 with the message (`status: "sent"`). Same `client_id` again → 200 with the original message (also when two retries race: the UNIQUE violation is caught). The same `client_id` in another conversation → 409. Not an active member → 403. `reply_to_id` and `attachment_ids` come with the phase 8 bonuses. |
 | DELETE | `/messages/{id}` | Delete for everyone (sender only), sets `deleted_at` |
-| GET | `/messages/{id}/receipts` | Per-member delivered/read times ("Message details", sender only) |
+| GET | `/messages/{id}/receipts` | "Message details" for **my** text message: `{message_id, sent_at, recipients: [{user_id, name, avatar_color, avatar_url, delivered_at, read_at}]}`. **Current members only** (same rule as ticks, 1.8). `read_at` is hidden if *my* read receipts are off (7.4). 404 if I can't see the message (or it's a system message); 403 if I can see it but didn't send it. |
 | PUT | `/messages/{id}/reaction` | `{emoji}`, upsert (bonus) |
 | DELETE | `/messages/{id}/reaction` | Remove my reaction (bonus) |
 
 ### Groups (a group is a conversation with `type='group'`, same id)
+Group endpoints on a DM id → 404. Not an admin → 403. Every change adds a system message and, after the commit, sends `message.new` (the system line, also to a just-removed member) plus `group.updated`.
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/groups` | `{name, member_ids[], description?}`. Creator becomes admin. Returns 201 with the conversation. Adds a system message. |
-| PATCH | `/groups/{id}` | `{name?, description?, disappearing_seconds?}` (admin only) |
-| PUT | `/groups/{id}/avatar` | multipart (admin only) |
-| GET | `/groups/{id}/members` | Active members with role + presence |
-| POST | `/groups/{id}/members` | `{user_ids[]}` (admin only) |
-| DELETE | `/groups/{id}/members/{user_id}` | Admin removes someone, or anyone removes themselves (= leave). 409 if the last admin tries to leave without promoting someone. |
-| PATCH | `/groups/{id}/members/{user_id}` | `{role}` promote/demote (admin only) |
+| POST | `/groups` | `{name, member_ids[]}`. `name` 1–32 characters (Signal's limit). Self and duplicates ignored, at least 1 other. Unknown or not-onboarded users → 422. **Max 50 members** including the creator → 422. Creator becomes admin. System message `group_created`. Returns 201 with `ConversationDetail`. |
+| PATCH | `/groups/{id}` | `{name}` (admin only). System message `group_renamed` ("…changed the group name to "X"."). Description and disappearing messages come with the phase 8 bonuses. |
+| PUT / DELETE | `/groups/{id}/avatar` | Group photo (admin only). Same checks as user avatars (`services/media.py`: magic bytes, 5 MB, `nosniff`). Stored under `UPLOADS_DIR/groups/`. System message `group_avatar_changed`. |
+| — | (members) | Not a separate endpoint: `GET /conversations/{id}` already returns the active members with roles. |
+| POST | `/groups/{id}/members` | `{user_ids[]}` (admin only). New members or **re-adds** (1.6 rule: `history_start_id` = latest message before the system message, so no gap and no old history). All already active → 409. Over 50 → 422. One `member_added` system message. |
+| DELETE | `/groups/{id}/members/{user_id}` | Admin removes someone, or anyone removes themselves (= leave). Sets `left_at` and `history_end_id` = the removal system message. **Last admin while others remain → 409** ("Make someone else an admin first"). The last person may always leave. **The check and the write are one conditional `UPDATE`** (SQLite runs each statement atomically). If it changes no row, the transaction, including the system message, is rolled back, so two admins leaving at once can't both succeed. |
+| PATCH | `/groups/{id}/members/{user_id}` | `{role}` promote/demote (admin only). Demoting the last admin → 409, with the same single-`UPDATE` guard. System message `admin_granted` / `admin_revoked`. |
 
 ### Attachments (bonus) & misc
 | Method | Path | Notes |
@@ -404,7 +405,7 @@ Emitted on the first socket connect (online) and when the last socket closes (of
   "conversation": { "id": 9, "name": "Weekend Trip", "avatar_url": null,
                     "members": [ { "user_id": 1, "role": "admin" } ] } } }
 ```
-`change` is one of `created | renamed | details_changed | avatar_changed | members_added | member_removed | member_left | role_changed`. The payload includes a full `conversation` snapshot, so clients replace their copy instead of patching it. A matching `kind='system'` message is sent separately as `message.new`.
+`change` is one of `created | renamed | avatar_changed | members_added | member_removed | member_left | role_changed`. Payload: `{conversation_id, change, actor_id, target_ids}`. **No conversation snapshot (changed from the original plan):** clients refetch `GET /conversations/{id}`, which keeps names and `can_send` worded for each viewer. The system line arrives separately as `message.new`. A removed member gets both events, then **no later `message.new`** for that group (tested).
 
 **`reaction.updated`** (bonus): `{message_id, conversation_id, user_id, emoji | null}`.
 **`error`**: `{detail, ref_type?}` for invalid client frames. The socket stays open.
@@ -514,7 +515,7 @@ AppShell
 ### 7.2 Blocking (including non-contacts)
 Anyone can be blocked through `PUT /blocks/{user_id}`, from the chat header ⋯ menu or the conversation details panel, whether or not they're a contact. Effects, all enforced in services:
 - **Blocked user sends to me:** the send succeeds from their side (201, Signal doesn't reveal blocks). No receipt row is created for me, it isn't pushed to me, and it stays at ✓ `sent` for them forever.
-- **My views:** history, the last-message preview and unread counts exclude messages from users I've blocked with `created_at >= blocks.created_at`. Messages from before the block stay visible. This applies to DMs and groups.
+- **My views:** history, the last-message preview and unread counts exclude messages from users I've blocked with `created_at >= blocks.created_at` (`visible_to()`). Messages from before the block stay visible. **This applies to groups too, verified against Signal:** "If you share a group with someone you had blocked, you will not see messages or changes to the group name, picture, or settings from this contact. However, they may see your messages" ([Signal Support](https://support.signal.org/hc/articles/360007060072)). So the blocked person's later group messages (and their system lines) are hidden from me but visible to everyone else, and they get no receipt row for me. Tested in `test_groups.py`.
 - **Me sending to a blocked user in a DM:** 403 "Unblock to send". The composer is replaced by an Unblock banner. In groups I can still send, and they still receive.
 - **Ephemeral events:** `typing.*` and `presence.update` from a blocked user are not relayed to the blocker, and the blocker's aren't relayed to them.
 - Unblocking deletes the row. Messages sent during the block stay hidden, because they were never delivered.

@@ -48,6 +48,14 @@ def describe_system_message(message: Message, viewer_id: int, names: dict[int, s
             return f"{actor} removed {targets}."
         case "member_left":
             return f"{actor} left the group."
+        case "group_renamed":
+            return f'{actor} changed the group name to "{data.get("name", "")}".'
+        case "group_avatar_changed":
+            return f"{actor} changed the group photo."
+        case "admin_granted":
+            return f"{actor} made {targets} an admin."
+        case "admin_revoked":
+            return f"{actor} removed {targets} as an admin."
         case _:
             return message.body
 

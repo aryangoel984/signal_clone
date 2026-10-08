@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 /** Which panel the left column shows (Signal swaps it in place rather than using modals). */
-export type LeftPaneMode = "chats" | "archive" | "compose" | "findUsername" | "findPhone";
+export type LeftPaneMode = "chats" | "archive" | "compose" | "findUsername" | "findPhone" | "newGroup";
 
 type LeftPaneState = {
   mode: LeftPaneMode;

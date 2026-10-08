@@ -34,6 +34,13 @@ class Typing(BaseModel):
     user_id: int
 
 
+class GroupUpdated(BaseModel):
+    conversation_id: int
+    change: str  # created | renamed | avatar_changed | members_added | member_removed | member_left | role_changed
+    actor_id: int
+    target_ids: list[int]
+
+
 class PresenceUpdate(BaseModel):
     user_id: int
     online: bool
