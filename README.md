@@ -1,9 +1,9 @@
 # Signal Clone
 
-**Author:** Aryan Goel\
-**Roll no:** 23/IT/209\
-**College:** Delhi Technological University\
-**Made for:** assignment submission for Scaler AI Labs (SDE Fullstack Assignment: Signal clone)
+**Author:** Aryan Goel
+**Roll no:** 23/IT/209
+**College:** Delhi Technological University
+**Made for:** Assignment Submission for Scaler AI Labs (SDE Fullstack Assignment: Signal clone)
 
 A full-stack clone of **Signal Desktop**: phone-number sign-in, contacts, one-to-one and group chats, real-time delivery with sending → sent → delivered → read ticks, typing indicators, presence, groups with admin controls, replies and emoji reactions, settings, light/dark themes and a mobile layout. Built with Next.js, FastAPI, SQLite and native WebSockets.
 
@@ -13,9 +13,8 @@ A full-stack clone of **Signal Desktop**: phone-number sign-in, contacts, one-to
 
 ## Live demo
 
-- **App:** https://signal-clone-lime-sigma.vercel.app
-- **API:** https://signalclone-production-5ee8.up.railway.app ([health check](https://signalclone-production-5ee8.up.railway.app/api/v1/health) · [interactive docs](https://signalclone-production-5ee8.up.railway.app/docs))
-- **Code:** https://github.com/aryangoel984/signal_clone
+- **App:** `https://signal-clone-lime-sigma.vercel.app/`
+- **API:** `https://signalclone-production-5ee8.up.railway.app/` (health check: `https://signalclone-production-5ee8.up.railway.app//api/v1/health`, interactive docs: `https://signalclone-production-5ee8.up.railway.app//docs`)
 
 **Demo accounts** (the verification code is always **`123456`**; the register screen has a "Demo accounts" panel that fills these in):
 
@@ -38,7 +37,7 @@ Any other valid phone number signs up a new account (with onboarding: name and p
 | Database | **SQLite** (WAL mode, foreign keys on) | Required by the brief. One file, zero setup; WAL lets reads run during a write. |
 | Real-time | **Native FastAPI WebSockets** | One endpoint, JSON envelopes `{type, payload}`. No Socket.IO layer to explain. |
 | Auth | Mocked OTP + **server-side hashed session tokens**, sent as `Authorization: Bearer` | Logout really revokes a session, and a leaked DB doesn't leak working tokens. |
-| Tests | **pytest** + pytest-asyncio + httpx (223 tests) | Auth, messaging, receipts, groups, blocks, replies/reactions and the WebSocket events. |
+| Tests | **pytest** + pytest-asyncio + httpx (215 tests) | Auth, messaging, receipts, groups, blocks, replies/reactions and the WebSocket events. |
 | Hosting | **Railway** (Docker, persistent volume) + **Vercel** | Railway keeps a long-lived WebSocket process and a disk; Vercel serves Next.js. |
 
 ## Run locally
@@ -46,7 +45,7 @@ Any other valid phone number signs up a new account (with onboarding: name and p
 Prerequisites: **Python 3.11+** and **Node 24** (`frontend/.nvmrc`).
 
 ```bash
-git clone https://github.com/aryangoel984/signal_clone.git signal-clone && cd signal-clone
+git clone <REPO_URL> signal-clone && cd signal-clone
 
 # Backend: http://localhost:8000 (docs at /docs)
 cd backend
@@ -72,7 +71,7 @@ Open http://localhost:3000 and sign in with `+1 555 010 0001` / `123456`.
 cd backend && source .venv/bin/activate
 python -m app.seed            # adds whatever is missing, changes nothing that exists
 python -m app.seed --reset    # DESTRUCTIVE: drops all tables and seeds from scratch
-pytest -q                     # 223 tests; each uses its own temporary database
+pytest -q                     # 215 tests; each uses its own temporary database
 ```
 
 Run the seed **before** starting uvicorn, or restart uvicorn after seeding, so the demo bots are recognised.
@@ -247,7 +246,7 @@ erDiagram
         json system_data
         text client_id "UNIQUE with sender_id"
         int reply_to_id FK
-        datetime deleted_at "delete for everyone: tombstone"
+        datetime deleted_at
     }
     message_receipts {
         int message_id PK, FK
@@ -279,7 +278,7 @@ erDiagram
 | `blocks` | Who blocked whom, and since when (anyone can be blocked, contact or not). |
 | `conversations` | One table for DMs and groups: name, photo, `direct_key`, newest-message time. |
 | `conversation_members` | Membership plus everything that's *mine* about a chat: role, read watermark, visible history range, pinned/archived/muted. |
-| `messages` | Text and system lines ("Alex added Emma"), with the optional quoted message; a deleted-for-everyone message stays as a tombstone row. |
+| `messages` | Text and system lines ("Alex added Emma"), with the optional quoted message. |
 | `message_receipts` | Per recipient, per message: when it was delivered and read. |
 | `reactions` | One emoji per user per message. |
 | `attachments` | Reserved for file attachments (table exists, feature not built). |
@@ -307,7 +306,7 @@ REST under `/api/v1`. JSON in and out; errors are always `{"detail": "..."}`. Ev
 | Contacts | `GET, POST /contacts` · `PATCH, DELETE /contacts/{user_id}` |
 | Blocks | `GET /blocks` · `PUT, DELETE /blocks/{user_id}` |
 | Conversations | `GET /conversations?archived=` (chat list with preview, unread count, ticks) · `POST /conversations/direct` (get or create) · `GET /conversations/{id}` · `PATCH /conversations/{id}/preferences` (pin, archive, mute) |
-| Messages | `GET /conversations/{id}/messages?before=&after=&limit=` · `POST /conversations/{id}/messages` (`client_id`, `body`, optional `reply_to_id`) · `POST /conversations/{id}/read` · `GET /messages/{id}/receipts` (Message details, sender only) · `DELETE /messages/{id}` (delete for everyone: sender only, within 24 h) |
+| Messages | `GET /conversations/{id}/messages?before=&after=&limit=` · `POST /conversations/{id}/messages` (`client_id`, `body`, optional `reply_to_id`) · `POST /conversations/{id}/read` · `GET /messages/{id}/receipts` (Message details, sender only) |
 | Reactions | `PUT /messages/{id}/reaction` (`{emoji}`, one of ❤️ 👍 👎 😂 😮 😢) · `DELETE /messages/{id}/reaction` |
 | Groups | `POST /groups` · `PATCH /groups/{id}` (rename) · `PUT, DELETE /groups/{id}/avatar` · `POST /groups/{id}/members` · `PATCH /groups/{id}/members/{user_id}` (make/remove admin) · `DELETE /groups/{id}/members/{user_id}` (remove, or leave when it's you) |
 | Media | `GET /media/...` (uploaded avatars and group photos) |
@@ -323,7 +322,6 @@ REST under `/api/v1`. JSON in and out; errors are always `{"detail": "..."}`. Ev
 | `typing.start` / `typing.stop` | both ways | Someone started/stopped typing; relayed to the other members. |
 | `presence.update` | server → client | A contact or chat partner came online or went offline (`last_seen_at`). |
 | `group.updated` | server → members | Rename, photo, members or roles changed; clients refetch the group. A just-removed member gets it too. |
-| `message.deleted` | server → members | A message was deleted for everyone; clients show the tombstone. |
 | `reaction.updated` | server → members | One user's reaction on a message was set or removed. |
 | `ping` → `pong` | client → server | Keepalive every 25 s. |
 | `error` | server → client | An invalid frame; the socket stays open. |
@@ -333,7 +331,7 @@ The full contract with example payloads is in [docs/PLAN.md](docs/PLAN.md) (sect
 ## Assumptions and known limitations
 
 - **Mocked verification.** The OTP is always `123456` and no SMS is sent. Any valid phone number can sign in.
-- **Mocked encryption.** Every chat starts with Signal's line "Messages and chat info are protected by end-to-end encryption" under the intro card, but it's a visual placeholder only: messages are stored and sent in plain text (over HTTPS/WSS when deployed), with no end-to-end cryptography or key exchange, as the brief allows.
+- **No encryption.** Messages are stored and sent in plain text (over HTTPS/WSS when deployed); there is no end-to-end cryptography or key exchange, as the brief allows. The UI doesn't show an "end-to-end encrypted" notice either.
 - **No account-enumeration protection.** `POST /auth/otp/verify` returns `is_new_user`, so anyone can find out whether a number has an account. A real system would send a real code and not reveal this before it's proven.
 - **Session token in `localStorage`.** The frontend (Vercel) and API (Railway) are different sites, so an httpOnly cookie would be a blockable third-party cookie, and WebSockets need the token in JavaScript anyway. The trade-off is that an XSS bug could read the token; React escapes all output and no user content is rendered as HTML. No Content-Security-Policy header is set.
 - **Single backend process.** Open sockets live in memory, so the backend must run as one uvicorn worker and one replica. Scaling out would need a shared pub/sub (e.g. Redis). SQLite also has a single writer.
@@ -344,9 +342,7 @@ The full contract with example payloads is in [docs/PLAN.md](docs/PLAN.md) (sect
 
 **Bonus features built:** dark mode (system, light or dark, saved per account and applied before first paint), reply/quote (jump to the original, loading older history if needed), emoji reactions (one per user, live updates), responsive layout (two panes from 900 px; a single pane with a back button and a bottom navigation bar below).
 
-**Also built:** delete for everyone (sender only, within 24 hours like Signal, with a confirm dialog; the message becomes "This message was deleted" for everyone, live).
-
-**Not built:** file/image attachments (the table exists but isn't used), disappearing messages, keyboard shortcuts.
+**Not built:** file/image attachments (the table exists but isn't used), disappearing messages, keyboard shortcuts, delete-for-everyone.
 
 ## How it matches Signal
 
@@ -359,15 +355,9 @@ Built **from memory**, because no reference screenshot covered them:
 - the Linked devices row and the mute menu,
 - the whole mobile/tablet layout (single pane, back button, bottom bar),
 - reply quotes, the reaction picker and reaction pills (their colours are approximations),
-- the delete-for-everyone dialog and tombstone (wording from Signal's own strings, styling approximate),
-- the end-to-end encryption line under the intro card: Signal Desktop doesn't show one at the start of a chat; the wording is Signal's own ("Messages and chat info are protected by end-to-end encryption"),
 - five of the twelve avatar colours (the other seven were sampled).
 
 Known differences: Settings omits desktop-only sections (Permissions, Updates, Stories, Advanced), the Privacy page lists blocked users inline rather than on a sub-page, the Calls tab has no call history, and the app shows online/last-seen, which Signal doesn't.
-
-## Development process
-
-Built with **Claude Code** (Anthropic's AI coding assistant) as a pair programmer. The ground rules are in [CLAUDE.md](CLAUDE.md), kept in the repo on purpose. The schema, API and WebSocket contract were designed first in [docs/PLAN.md](docs/PLAN.md), and the build went one phase at a time. For each phase I reviewed a short plan and approved it, often with changes. Claude Code then wrote the code and tests and checked the result in real browsers. I reviewed it, tested by hand, and made every commit myself.
 
 ## Repository layout
 
