@@ -346,7 +346,8 @@ Layering: routers parse the request, call a service, and return a schema. Servic
 
 ### Connection manager (consequences of async SQLAlchemy)
 - **Single event loop, no locks.** REST handlers, WS handlers and bot tasks all run as coroutines on the same loop. The manager is a plain `dict[int, set[WebSocket]]`, and register/unregister never `await` between reading and changing it. So it needs no `threading.Lock` or `asyncio.Lock`.
-- **Broadcast is a plain `await`.** Services commit, then `await manager.send_to_users(user_ids, event)`. There's no `run_in_threadpool` or `anyio.from_thread` bridging, which a sync ORM would need.
+- **Broadcast is a plain `await`.** Services commit, then call `Realtime` (`app/ws/realtime.py`), which awaits `manager.send_many(user_ids, event)`. There's no `run_in_threadpool` or `anyio.from_thread` bridging, which a sync ORM would need. `Realtime` is the single place that turns committed changes into events. It opens its own short sessions, words `message.new` per recipient, and computes `message.status` per sender. It's injected into routes as `RealtimeDep`.
+- **Disconnect cleanup runs detached** (`Realtime.spawn`): saving `last_seen_at` and broadcasting "offline" must not be cut off if the handler is cancelled while closing. Tracked tasks are awaited in the `lifespan` shutdown. (Found in tests: cancelling mid-cleanup deadlocked SQLAlchemy's shielded connection return.)
 - **A slow socket can't block the others.** Each send is wrapped in `asyncio.wait_for(ws.send_json(...), timeout=5)`, and sends fan out with `asyncio.gather(..., return_exceptions=True)`. A socket that fails or times out is dropped from the manager.
 - **One short-lived `AsyncSession` per WS frame**, never one held for the whole connection. That keeps SQLite write locks short and avoids stale data across a long-lived socket.
 - **Never block the loop.** No sync file or DB I/O inside handlers (attachment writes use `anyio.Path`, which already ships with Starlette, so no new dependency), and CPU-heavy work (none planned) would go to a thread.
@@ -362,15 +363,15 @@ Layering: routers parse the request, call a service, and return a schema. Servic
 Messages and read receipts are **not** sent over WS. They go through REST (section 2) so they're persisted, validated and idempotent.
 
 ### Server → client
-**`message.new`**: sent to every active member, including the sender's *other* tabs.
+**`message.new`**: sent to every active member with an open socket, including the sender's *other* tabs, and never to members who blocked the sender. `message` is the same `MessageOut` as the REST history, **worded for each recipient** (names, `client_id` only for the sender, `status` only for the sender).
 ```json
 { "type": "message.new", "payload": {
-  "message": { "id": 812, "conversation_id": 7, "client_id": "6f1c…", "sender_id": 3,
-               "kind": "text", "body": "hey", "reply_to": null, "attachments": [],
-               "created_at": "2026-10-07T15:04:05Z", "status": "sent" },
-  "conversation": { "id": 7, "last_message_at": "2026-10-07T15:04:05Z" } } }
+  "conversation_id": 7,
+  "message": { "id": 812, "conversation_id": 7, "client_id": null, "kind": "text", "text": "hey",
+               "sender_id": 3, "sender_name": "Priya Sharma", "sender_avatar_color": "A120",
+               "sender_avatar_url": null, "created_at": "2026-10-07T15:04:05Z", "status": null } } }
 ```
-Server side: right after pushing to a recipient's open socket, it sets that recipient's `delivered_at` and emits `message.status` to the sender. Client side: if `client_id` matches an optimistic bubble, the bubble is replaced. Otherwise the message is appended and the chat list entry is bumped and its unread count increased.
+Server side: right after pushing to a recipient's open socket, it sets that recipient's `delivered_at` and emits `message.status` to the sender. A retried send (same `client_id`) broadcasts nothing. Client side: matched by `id`, then by `client_id` (my optimistic bubble), otherwise appended. The chat list reloads (debounced) to update order, preview and unread count.
 
 **`message.status`**: sent to the **sender** of the affected messages only.
 ```json
@@ -385,13 +386,13 @@ Server side: right after pushing to a recipient's open socket, it sets that reci
 ```json
 { "type": "typing.start", "payload": { "conversation_id": 7, "user_id": 3 } }
 ```
-The client shows "…" in the header and timeline, and in a group, the typist's avatar. It clears on `typing.stop`, on `message.new` from that user, or after a **5 s safety timeout**.
+The client shows animated dots at the bottom of the timeline (in a group, with the typists' avatars) and in place of the chat-list preview. It clears on `typing.stop`, on `message.new` from that user, or after a **5 s safety timeout**. Not relayed to members who blocked the typist, and not sent at all if the typist has typing indicators off.
 
 **`presence.update`**: sent to everyone who shares a conversation with the user or has them as a contact.
 ```json
 { "type": "presence.update", "payload": { "user_id": 3, "online": false, "last_seen_at": "2026-10-07T15:10:00Z" } }
 ```
-Emitted on the first socket connect (online) and when the last socket closes (offline, `last_seen_at` stored).
+Emitted on the first socket connect (online) and when the last socket closes (offline, `last_seen_at` stored). Demo bots always count as online. REST also carries presence: DM rows and details have `other_user_online` and `other_user_last_seen_at`. **Every chat-list load overwrites the client's live presence for DM partners**, which corrects stale state after a reconnect. A server restart drops sockets without sending offline events; found in the two-browser test. The UI shows a green dot on DM avatars and "Online" / "Last seen …" in the chat header. Signal itself doesn't show presence; the assignment asks for it.
 
 **`group.updated`**: sent to every active member, **plus** any member just removed, so their UI can switch to read-only.
 ```json
@@ -409,9 +410,19 @@ Emitted on the first socket connect (online) and when the last socket closes (of
 **`error`**: `{detail, ref_type?}` for invalid client frames. The socket stays open.
 
 ### Connection lifecycle
-1. On connect: authenticate, register the socket, broadcast `presence.update` (online), then mark every pending receipt for this user as delivered (partial index, section 1.8) and send `message.status` to the affected senders.
-2. Client reconnect: exponential backoff 1 s, 2 s, 4 s … capped at 30 s, with jitter. On reopen it refetches `/conversations` and, for the open chat, `/messages?after=<last id>`.
-3. On disconnect: unregister. If it was the last socket, store `last_seen_at` and broadcast offline.
+1. **On connect:**
+   - The handshake is accepted first, so a bad or expired token can be closed with code **4401**. Closing before accepting would turn into an HTTP 403, and the client would never see 4401.
+   - Register the socket and broadcast `presence.update` (online).
+   - Mark every pending receipt for this user as delivered (partial index, section 1.8) and send `message.status` to the affected senders.
+   - Loading the chat list does the same delivery step, as a fallback for clients whose socket isn't up.
+2. **Client reconnect:**
+   - Exponential backoff: 1 s, 2 s, 4 s … capped at 30 s, with ±20% jitter.
+   - On reopen it refetches `/conversations` (which also refreshes presence) and, for every loaded chat, `/messages?after=<last id>`.
+   - A 4401 close signs the user out.
+3. **On disconnect:** unregister. If it was the last socket, store `last_seen_at` and broadcast offline. This runs as a detached task (see Connection manager).
+
+### Demo bots in practice (section 8)
+Implemented in `app/services/demo_bot.py` and registered as a `Realtime` message hook. Delays are multiplied by `DEMO_BOT_DELAY_SCALE`, which is 0 in tests. Bot ids are resolved from `DEMO_BOT_PHONES` at startup. If you seed *after* starting the server, restart it so the bots are recognised.
 
 ## 4. Frontend pages & component tree
 

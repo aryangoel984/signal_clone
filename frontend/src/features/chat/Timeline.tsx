@@ -4,12 +4,14 @@ import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useMessages } from "@/store/messages";
+import { useTypingIn } from "@/store/typing";
 import type { ConversationDetail } from "@/types/conversation";
 
-import { buildRows } from "./build-rows";
+import { buildRows, unreadMarker } from "./build-rows";
 import { ConversationHero } from "./ConversationHero";
 import { MessageBubble } from "./MessageBubble";
 import { DateSeparator, SystemMessage, UnreadDivider } from "./TimelineMarkers";
+import { TypingIndicator } from "./TypingIndicator";
 
 type TimelineProps = {
   conversation: ConversationDetail;
@@ -35,7 +37,11 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
   const [showJump, setShowJump] = useState(false);
 
   const items = useMemo(() => thread?.items ?? [], [thread]);
-  const rows = useMemo(() => buildRows(items, myId, lastReadAtOpen), [items, myId, lastReadAtOpen]);
+  const [marker] = useState(() => unreadMarker(items, myId, lastReadAtOpen)); // messages are loaded before mount
+  const rows = useMemo(() => buildRows(items, myId, marker), [items, myId, marker]);
+  const typingUserIds = useTypingIn(conversationId).filter((id) => id !== myId);
+  const nearBottom = useRef(true);
+  const NEAR_BOTTOM_PX = 150;
 
   // Scroll position: first render -> unread divider or bottom; older page -> keep place;
   // new message at the bottom (e.g. mine) -> follow it.
@@ -50,16 +56,19 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
     } else if (restoreFromBottom.current !== null) {
       element.scrollTop = element.scrollHeight - restoreFromBottom.current;
       restoreFromBottom.current = null;
-    } else if (items.length > lastCount.current) {
-      element.scrollTop = element.scrollHeight;
+    } else if (items.length > lastCount.current || typingUserIds.length > 0) {
+      // Follow new messages / typing only if the reader is already at the bottom, or it's mine.
+      const newestIsMine = items.at(-1)?.sender_id === myId && items.length > lastCount.current;
+      if (nearBottom.current || newestIsMine) element.scrollTop = element.scrollHeight;
     }
     lastCount.current = items.length;
-  }, [items, thread?.loaded]);
+  }, [items, thread?.loaded, typingUserIds.length, myId]);
 
   function handleScroll() {
     const element = scroller.current;
     if (!element || !thread) return;
     const fromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    nearBottom.current = fromBottom < NEAR_BOTTOM_PX;
     setShowJump(fromBottom > JUMP_BUTTON_THRESHOLD_PX);
     if (element.scrollTop < LOAD_OLDER_THRESHOLD_PX && thread.nextCursor !== null && !thread.loadingOlder) {
       restoreFromBottom.current = element.scrollHeight - element.scrollTop;
@@ -130,6 +139,11 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
               );
           }
         })}
+        {typingUserIds.length > 0 && (
+          <TypingIndicator
+            members={conversation.type === "group" ? conversation.members.filter((m) => typingUserIds.includes(m.user_id)) : []}
+          />
+        )}
       </div>
       {showJump && (
         <button

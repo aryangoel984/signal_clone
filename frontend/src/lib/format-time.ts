@@ -54,3 +54,17 @@ export function formatDaySeparator(iso: string, now: Date = new Date()): string 
 export function isSameLocalDay(a: string, b: string): boolean {
   return isSameDay(new Date(a), new Date(b));
 }
+
+/** Chat header subtitle for someone offline: "Last seen 5m ago", "Last seen yesterday", ... */
+export function formatLastSeen(iso: string | null, now: Date = new Date()): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  const elapsed = now.getTime() - date.getTime();
+  if (elapsed < MINUTE) return "Last seen just now";
+  if (elapsed < 60 * MINUTE) return `Last seen ${Math.floor(elapsed / MINUTE)}m ago`;
+  if (isSameDay(date, now)) return `Last seen today at ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (isSameDay(date, yesterday)) return "Last seen yesterday";
+  return `Last seen ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+}

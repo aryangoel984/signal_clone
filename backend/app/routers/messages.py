@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
-from app.core.deps import CurrentUser, DbSession
+from app.core.deps import CurrentUser, DbSession, RealtimeDep
 from app.schemas.message import MessageOut, MessagePage, ReadRequest, SendMessageRequest
 from app.services import message_service, receipt_service
 from app.services.conversation_service import ConversationNotFoundError, load_membership
@@ -29,10 +29,15 @@ async def list_messages(
 
 @router.post("/{conversation_id}/messages")
 async def send_message(
-    conversation_id: int, body: SendMessageRequest, user: CurrentUser, db: DbSession, response: Response
+    conversation_id: int,
+    body: SendMessageRequest,
+    user: CurrentUser,
+    db: DbSession,
+    realtime: RealtimeDep,
+    response: Response,
 ) -> MessageOut:
     try:
-        message, created = await message_service.send_message(db, user, conversation_id, body.client_id, body.body)
+        message, created = await message_service.send_message(db, realtime, user, conversation_id, body.client_id, body.body)
     except ConversationNotFoundError:
         raise _NOT_FOUND from None
     except message_service.NotActiveMemberError:
@@ -44,9 +49,12 @@ async def send_message(
 
 
 @router.post("/{conversation_id}/read", status_code=status.HTTP_204_NO_CONTENT)
-async def mark_read(conversation_id: int, body: ReadRequest, user: CurrentUser, db: DbSession) -> None:
+async def mark_read(
+    conversation_id: int, body: ReadRequest, user: CurrentUser, db: DbSession, realtime: RealtimeDep
+) -> None:
     try:
         member, _ = await load_membership(db, user.id, conversation_id)
     except ConversationNotFoundError:
         raise _NOT_FOUND from None
-    await receipt_service.mark_read(db, user, member, body.up_to_message_id)
+    changed = await receipt_service.mark_read(db, user, member, body.up_to_message_id)
+    await realtime.statuses_changed(changed)  # after the commit inside mark_read

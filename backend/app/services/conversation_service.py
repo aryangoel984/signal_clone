@@ -16,9 +16,9 @@ from app.schemas.conversation import (
     MemberOut,
     UpdatePreferencesRequest,
 )
-from app.services import receipt_service
 from app.services.message_queries import aggregate_status, last_visible_message, unread_count
 from app.services.names import describe_system_message, display_names, user_ids_in
+from app.ws.realtime import Realtime
 
 
 class ConversationNotFoundError(Exception):
@@ -40,14 +40,18 @@ class _Context:
     viewer_id: int
     read_receipts_on: bool
     contact_ids: set[int]
+    realtime: Realtime
 
 
-async def list_conversations(session: AsyncSession, viewer: User, *, archived: bool) -> list[ConversationSummary]:
+async def list_conversations(
+    session: AsyncSession, realtime: Realtime, viewer: User, *, archived: bool
+) -> list[ConversationSummary]:
     """The chat list. Preview, unread count and ordering only consider messages the viewer
     can see (history range + blocks, PLAN 1.6). Empty DMs are hidden (PLAN 7.3).
     Roughly three small indexed queries per conversation: fine at demo scale.
-    Loading the list also counts as the client receiving its pending messages (delivered)."""
-    await receipt_service.mark_all_delivered(session, viewer.id)
+    Loading the list also counts as the client receiving its pending messages (delivered),
+    in case its WebSocket isn't connected."""
+    await realtime.deliver_pending(viewer.id)
     rows = (
         await session.execute(
             select(ConversationMember, Conversation)
@@ -55,7 +59,7 @@ async def list_conversations(session: AsyncSession, viewer: User, *, archived: b
             .where(ConversationMember.user_id == viewer.id, ConversationMember.is_archived.is_(archived))
         )
     ).all()
-    context = await _load_context(session, viewer)
+    context = await _load_context(session, realtime, viewer)
     members_by_conversation = await _active_members(session, [conversation.id for _, conversation in rows])
 
     summaries: list[ConversationSummary] = []
@@ -70,9 +74,11 @@ async def list_conversations(session: AsyncSession, viewer: User, *, archived: b
     return summaries
 
 
-async def get_conversation(session: AsyncSession, viewer: User, conversation_id: int) -> ConversationDetail:
+async def get_conversation(
+    session: AsyncSession, realtime: Realtime, viewer: User, conversation_id: int
+) -> ConversationDetail:
     member, conversation = await load_membership(session, viewer.id, conversation_id)
-    context = await _load_context(session, viewer)
+    context = await _load_context(session, realtime, viewer)
     members = (await _active_members(session, [conversation.id]))[conversation.id]
     summary = await _summarize(session, context, member, conversation, members)
     names = await display_names(session, viewer.id, [user.id for user, _ in members])
@@ -97,7 +103,7 @@ async def get_conversation(session: AsyncSession, viewer: User, conversation_id:
 
 
 async def get_or_create_direct(
-    session: AsyncSession, viewer: User, other_user_id: int
+    session: AsyncSession, realtime: Realtime, viewer: User, other_user_id: int
 ) -> tuple[ConversationDetail, bool]:
     """Returns (conversation, created). The UNIQUE direct_key makes concurrent calls safe."""
     if other_user_id == viewer.id:
@@ -109,7 +115,7 @@ async def get_or_create_direct(
     direct_key = f"{min(viewer.id, other.id)}:{max(viewer.id, other.id)}"
     existing = await session.scalar(select(Conversation.id).where(Conversation.direct_key == direct_key))
     if existing is not None:
-        return await get_conversation(session, viewer, existing), False
+        return await get_conversation(session, realtime, viewer, existing), False
 
     conversation = Conversation(
         type=ConversationType.DIRECT,
@@ -123,7 +129,7 @@ async def get_or_create_direct(
     except IntegrityError:
         await session.rollback()  # another request created it first
         existing_id = (await session.execute(select(Conversation.id).where(Conversation.direct_key == direct_key))).scalar_one()
-        return await get_conversation(session, viewer, existing_id), False
+        return await get_conversation(session, realtime, viewer, existing_id), False
 
     session.add_all(
         [
@@ -132,17 +138,17 @@ async def get_or_create_direct(
         ]
     )
     await session.commit()
-    return await get_conversation(session, viewer, conversation.id), True
+    return await get_conversation(session, realtime, viewer, conversation.id), True
 
 
 async def update_preferences(
-    session: AsyncSession, viewer: User, conversation_id: int, changes: UpdatePreferencesRequest
+    session: AsyncSession, realtime: Realtime, viewer: User, conversation_id: int, changes: UpdatePreferencesRequest
 ) -> ConversationDetail:
     member, _ = await load_membership(session, viewer.id, conversation_id)
     for name, value in changes.model_dump(exclude_unset=True).items():
         setattr(member, name, value)
     await session.commit()
-    return await get_conversation(session, viewer, conversation_id)
+    return await get_conversation(session, realtime, viewer, conversation_id)
 
 
 # --- helpers ----------------------------------------------------------------------------
@@ -175,7 +181,7 @@ async def _groups_in_common(session: AsyncSession, viewer_id: int, other_id: int
     return [name for name in rows.scalars() if name is not None]
 
 
-async def _load_context(session: AsyncSession, viewer: User) -> _Context:
+async def _load_context(session: AsyncSession, realtime: Realtime, viewer: User) -> _Context:
     settings = await session.get(UserSettings, viewer.id)
     contact_ids = set(
         (await session.execute(select(Contact.contact_user_id).where(Contact.owner_id == viewer.id))).scalars()
@@ -184,6 +190,7 @@ async def _load_context(session: AsyncSession, viewer: User) -> _Context:
         viewer_id=viewer.id,
         read_receipts_on=settings.read_receipts_enabled if settings else True,
         contact_ids=contact_ids,
+        realtime=realtime,
     )
 
 
@@ -234,6 +241,8 @@ async def _summarize(
         avatar_url=avatar_url,
         avatar_color=avatar_color,
         other_user_id=other.id if is_direct and other else None,
+        other_user_online=context.realtime.is_online(other.id) if is_direct and other else None,
+        other_user_last_seen_at=other.last_seen_at if is_direct and other else None,
         is_contact=(other.id in context.contact_ids) if is_direct and other else None,
         member_count=len(members),
         is_pinned=member.is_pinned,

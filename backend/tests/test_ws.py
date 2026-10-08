@@ -1,0 +1,270 @@
+"""WebSocket tests (PLAN section 3). Synchronous: Starlette's TestClient drives WebSockets.
+
+To assert what a socket received without hanging, `drain` sends a ping and collects every
+event up to the pong. Events caused by a REST call are sent before that call returns, so
+they're always queued ahead of the pong.
+"""
+
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from app.core.config import Settings
+from app.main import create_app
+from app.seed import run_seed
+from tests.helpers import ALEX, EMMA, LENA, PRIYA
+
+Event = dict[str, Any]
+MAYA = "+15550000001"
+
+
+@pytest.fixture
+def live(tmp_path: Path) -> Iterator[TestClient]:
+    settings = Settings(
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'ws.db'}",
+        uploads_dir=tmp_path / "uploads",
+        cors_origins=["http://localhost:3000"],
+        demo_bots_enabled=True,
+        demo_bot_delay_scale=0,
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        portal = client.portal
+        assert portal is not None  # set while the client is entered
+        portal.call(run_seed, app.state.db)
+        portal.call(app.state.demo_bots.load)  # the seed ran after startup
+        yield client
+
+
+def token(client: TestClient, phone: str) -> str:
+    response = client.post("/api/v1/auth/otp/verify", json={"phone_number": phone, "code": "123456"})
+    return response.json()["token"]
+
+
+def auth(t: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {t}"}
+
+
+def chat(client: TestClient, t: str, title: str) -> dict[str, Any]:
+    return next(c for c in client.get("/api/v1/conversations", headers=auth(t)).json() if c["title"] == title)
+
+
+def me(client: TestClient, t: str) -> int:
+    return client.get("/api/v1/users/me", headers=auth(t)).json()["id"]
+
+
+def drain(ws: Any) -> list[Event]:
+    ws.send_json({"type": "ping", "payload": {}})
+    events: list[Event] = []
+    while (event := ws.receive_json())["type"] != "pong":
+        events.append(event)
+    return events
+
+
+def wait_for(ws: Any, event_type: str) -> dict[str, Any]:
+    """For events produced by background work (disconnect cleanup, bots): block until one arrives."""
+    while (event := ws.receive_json())["type"] != event_type:
+        pass
+    return event["payload"]
+
+
+def of_type(events: list[Event], event_type: str) -> list[dict[str, Any]]:
+    return [e["payload"] for e in events if e["type"] == event_type]
+
+
+def send(client: TestClient, t: str, conversation_id: int, body: str, client_id: str) -> dict[str, Any]:
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        headers=auth(t),
+        json={"client_id": client_id, "body": body},
+    )
+    assert response.status_code in (200, 201), response.text
+    return response.json()
+
+
+# --- connection and presence ---------------------------------------------------------------
+
+
+def test_bad_token_is_closed_with_4401(live: TestClient) -> None:
+    with live.websocket_connect("/ws?token=not-a-token") as ws, pytest.raises(WebSocketDisconnect) as closed:
+        ws.receive_json()
+
+    assert closed.value.code == 4401
+
+
+def test_presence_online_and_offline(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    priya_id = me(live, priya)
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws:
+        drain(alex_ws)
+        with live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+            drain(priya_ws)
+            online = of_type(drain(alex_ws), "presence.update")
+            assert online == [{"user_id": priya_id, "online": True, "last_seen_at": None}]
+            assert chat(live, alex, "Priya Sharma")["other_user_online"] is True
+        offline = wait_for(alex_ws, "presence.update")
+
+    assert offline["user_id"] == priya_id and offline["online"] is False
+    assert offline["last_seen_at"] is not None
+
+
+def test_bots_are_always_online(live: TestClient) -> None:
+    assert chat(live, token(live, ALEX), "Maya (bot)")["other_user_online"] is True
+
+
+def test_invalid_frame_gets_error_and_socket_stays_open(live: TestClient) -> None:
+    with live.websocket_connect(f"/ws?token={token(live, ALEX)}") as ws:
+        drain(ws)
+        ws.send_text("not json")
+        assert ws.receive_json() == {"type": "error", "payload": {"detail": "Invalid frame"}}
+        assert drain(ws) == []  # still answers pings
+
+
+# --- messages and receipts -------------------------------------------------------------------
+
+
+def test_new_message_is_pushed_and_marked_delivered(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws, live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(alex_ws)
+        drain(priya_ws)
+        sent = send(live, alex, dm, "Live hello", "ws-test-0001")
+
+        to_priya = of_type(drain(priya_ws), "message.new")
+        to_alex = drain(alex_ws)
+
+    assert len(to_priya) == 1
+    assert to_priya[0]["message"]["text"] == "Live hello"
+    assert to_priya[0]["message"]["sender_name"] == "Alex Rivera"  # worded for Priya
+    assert to_priya[0]["message"]["client_id"] is None
+    assert of_type(to_alex, "message.new")[0]["message"]["client_id"] == "ws-test-0001"  # my other tabs
+    assert of_type(to_alex, "message.status") == [
+        {"conversation_id": dm, "updates": [{"message_id": sent["id"], "status": "delivered"}]}
+    ]
+
+
+def test_read_is_pushed_to_sender(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws, live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(alex_ws)
+        drain(priya_ws)
+        sent = send(live, alex, dm, "Read me", "ws-test-0002")
+        drain(alex_ws)
+
+        live.post(f"/api/v1/conversations/{dm}/read", headers=auth(priya), json={"up_to_message_id": sent["id"]})
+
+        assert of_type(drain(alex_ws), "message.status") == [
+            {"conversation_id": dm, "updates": [{"message_id": sent["id"], "status": "read"}]}
+        ]
+
+
+def test_receipts_off_reader_never_sends_read(live: TestClient) -> None:
+    alex, lena = token(live, ALEX), token(live, LENA)
+    dm = chat(live, alex, "Lena Fischer")["id"]
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws:
+        drain(alex_ws)
+        sent = send(live, alex, dm, "Hi Lena", "ws-test-0003")
+        assert of_type(drain(alex_ws), "message.status") == []  # Lena isn't connected: still "sent"
+
+        live.post(f"/api/v1/conversations/{dm}/read", headers=auth(lena), json={"up_to_message_id": sent["id"]})
+
+        statuses = of_type(drain(alex_ws), "message.status")
+    assert [u["status"] for s in statuses for u in s["updates"]] == ["delivered"]
+
+
+def test_pending_messages_are_delivered_on_connect(live: TestClient) -> None:
+    alex, emma = token(live, ALEX), token(live, EMMA)
+    dm = chat(live, alex, "Emma Larsen")["id"]
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws:
+        drain(alex_ws)
+        sent = send(live, alex, dm, "While you were away", "ws-test-0004")
+        drain(alex_ws)
+
+        with live.websocket_connect(f"/ws?token={emma}") as emma_ws:
+            drain(emma_ws)
+            updates = [u for s in of_type(drain(alex_ws), "message.status") for u in s["updates"]]
+
+    assert {"message_id": sent["id"], "status": "delivered"} in updates
+
+
+def test_retry_does_not_broadcast_again(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+
+    with live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(priya_ws)
+        send(live, alex, dm, "Once", "ws-test-0005")
+        send(live, alex, dm, "Once", "ws-test-0005")
+
+        assert len(of_type(drain(priya_ws), "message.new")) == 1
+
+
+# --- typing ------------------------------------------------------------------------------------
+
+
+def test_typing_is_relayed_to_others_only(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+    alex_id = me(live, alex)
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws, live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(alex_ws)
+        drain(priya_ws)
+        alex_ws.send_json({"type": "typing.start", "payload": {"conversation_id": dm}})
+        alex_ws.send_json({"type": "typing.stop", "payload": {"conversation_id": dm}})
+
+        mine = drain(alex_ws)
+        theirs = drain(priya_ws)
+
+    assert [e["type"] for e in theirs] == ["typing.start", "typing.stop"]
+    assert theirs[0]["payload"] == {"conversation_id": dm, "user_id": alex_id}
+    assert mine == []
+
+
+def test_typing_in_foreign_conversation_is_an_error(live: TestClient) -> None:
+    priya = token(live, PRIYA)
+    priya_marcus = chat(live, priya, "Marcus Chen")["id"]
+
+    with live.websocket_connect(f"/ws?token={token(live, ALEX)}") as ws:
+        drain(ws)
+        ws.send_json({"type": "typing.start", "payload": {"conversation_id": priya_marcus}})
+
+        assert drain(ws) == [{"type": "error", "payload": {"detail": "Not a member of this conversation"}}]
+
+
+# --- demo bots --------------------------------------------------------------------------------------
+
+
+def test_bot_delivers_reads_types_and_replies(live: TestClient) -> None:
+    alex = token(live, ALEX)
+    maya_dm = chat(live, alex, "Maya (bot)")
+
+    with live.websocket_connect(f"/ws?token={alex}") as ws:
+        drain(ws)
+        sent = send(live, alex, maya_dm["id"], "hello", "ws-test-0006")
+
+        seen: list[str] = []
+        while True:  # bot work runs in a background task; wait for its reply
+            event = ws.receive_json()
+            if event["type"] == "message.status":
+                seen += [u["status"] for u in event["payload"]["updates"] if u["message_id"] == sent["id"]]
+            elif event["type"] in ("typing.start", "typing.stop"):
+                seen.append(event["type"])
+            elif event["type"] == "message.new" and event["payload"]["message"]["sender_id"] == maya_dm["other_user_id"]:
+                reply = event["payload"]["message"]
+                break
+
+    assert seen == ["delivered", "read", "typing.start", "typing.stop"]
+    assert reply["text"] == "Hey there! 👋"
+    assert reply["sender_name"] == "Maya (bot)"

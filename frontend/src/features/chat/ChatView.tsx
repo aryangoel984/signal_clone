@@ -52,6 +52,7 @@ export function ChatView({ conversationId }: { conversationId: number }) {
       />
       <Timeline conversation={conversation} myId={me.id} lastReadAtOpen={state.lastReadAtOpen} />
       <Composer
+        conversationId={conversationId}
         onSend={(text) => void send(conversationId, text, me)}
         disabledReason={
           conversation.is_active ? undefined : "You can't send messages to this group because you're no longer a member."

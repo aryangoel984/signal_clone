@@ -14,6 +14,7 @@ from app.schemas.message import MessageOut, MessagePage
 from app.services.conversation_service import load_membership
 from app.services.message_queries import aggregate_status, visible_to
 from app.services.names import describe_system_message, display_names, user_ids_in
+from app.ws.realtime import Realtime
 
 
 class NotActiveMemberError(Exception):
@@ -52,10 +53,10 @@ async def list_messages(
 
 
 async def send_message(
-    session: AsyncSession, viewer: User, conversation_id: int, client_id: str, body: str
+    session: AsyncSession, realtime: Realtime, viewer: User, conversation_id: int, client_id: str, body: str
 ) -> tuple[MessageOut, bool]:
     """Returns (message, created). Retrying with the same client_id returns the original
-    message instead of a duplicate (UNIQUE(sender_id, client_id))."""
+    message instead of a duplicate (UNIQUE(sender_id, client_id)) and broadcasts nothing."""
     member, conversation = await load_membership(session, viewer.id, conversation_id)
     if member.left_at is not None:
         raise NotActiveMemberError
@@ -88,7 +89,9 @@ async def send_message(
     conversation.last_message_at = message.created_at
     member.last_read_message_id = max(member.last_read_message_id, message.id)  # sending implies reading
     await session.commit()
-    return (await serialize(session, viewer, [message]))[0], True
+    result = (await serialize(session, viewer, [message]))[0]
+    await realtime.message_created(message.id)  # after the commit: message.new + delivered
+    return result, True
 
 
 async def serialize(session: AsyncSession, viewer: User, messages: Sequence[Message]) -> list[MessageOut]:
@@ -103,7 +106,7 @@ async def serialize(session: AsyncSession, viewer: User, messages: Sequence[Mess
             await session.execute(select(User).where(User.id.in_({m.sender_id for m in messages if m.sender_id})))
         ).scalars()
     }
-    statuses = await _statuses(session, viewer, [m.id for m in messages if m.sender_id == viewer.id and m.kind is MessageKind.TEXT])
+    statuses = await statuses_for(session, viewer, [m.id for m in messages if m.sender_id == viewer.id and m.kind is MessageKind.TEXT])
 
     result: list[MessageOut] = []
     for message in messages:
@@ -163,7 +166,7 @@ async def _recipient_ids(session: AsyncSession, conversation_id: int, sender_id:
     return list(rows.scalars())
 
 
-async def _statuses(session: AsyncSession, viewer: User, message_ids: list[int]) -> dict[int, MessageStatus]:
+async def statuses_for(session: AsyncSession, viewer: User, message_ids: list[int]) -> dict[int, MessageStatus]:
     if not message_ids:
         return {}
     receipts = (await session.execute(select(MessageReceipt).where(MessageReceipt.message_id.in_(message_ids)))).scalars()

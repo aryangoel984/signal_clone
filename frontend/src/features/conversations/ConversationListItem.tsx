@@ -5,9 +5,13 @@ import Link from "next/link";
 import type { MouseEvent } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { PresenceDot } from "@/components/PresenceDot";
 import { StatusTicks } from "@/components/StatusTicks";
+import { TypingDots } from "@/components/TypingDots";
 import { UnreadBadge } from "@/components/UnreadBadge";
 import { formatListTime } from "@/lib/format-time";
+import { usePresence } from "@/store/presence";
+import { useTypingIn } from "@/store/typing";
 import type { ConversationSummary } from "@/types/conversation";
 
 type ConversationListItemProps = {
@@ -32,6 +36,11 @@ function isMuted(chat: ConversationSummary): boolean {
 export function ConversationListItem({ chat, selected, onContextMenu }: ConversationListItemProps) {
   const unread = chat.unread_count > 0;
   const status = chat.last_message?.status;
+  const someoneTyping = useTypingIn(chat.id).length > 0;
+  const presence = usePresence(chat.other_user_id, {
+    online: chat.other_user_online ?? false,
+    lastSeenAt: chat.other_user_last_seen_at,
+  });
 
   return (
     <li>
@@ -41,13 +50,16 @@ export function ConversationListItem({ chat, selected, onContextMenu }: Conversa
         onContextMenu={(event) => onContextMenu?.(event, chat)}
         className={`flex items-center gap-3 rounded-lg px-3.5 py-3 transition-colors hover:bg-selected ${selected ? "bg-selected" : ""}`}
       >
-        <Avatar
-          name={chat.title}
-          color={chat.avatar_color}
-          imageUrl={chat.avatar_url}
-          size={48}
-          isGroup={chat.type === "group"}
-        />
+        <span className="relative shrink-0">
+          <Avatar
+            name={chat.title}
+            color={chat.avatar_color}
+            imageUrl={chat.avatar_url}
+            size={48}
+            isGroup={chat.type === "group"}
+          />
+          {chat.type === "direct" && presence.online && <PresenceDot />}
+        </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span className={`truncate text-sm text-text-primary ${unread ? "font-bold" : "font-semibold"}`}>
@@ -60,9 +72,15 @@ export function ConversationListItem({ chat, selected, onContextMenu }: Conversa
             </span>
           </div>
           <div className="mt-0.5 flex items-center gap-2">
-            <span className={`truncate text-sm ${unread ? "font-medium text-text-primary" : "text-text-secondary"}`}>
-              {previewText(chat)}
-            </span>
+            {someoneTyping ? (
+              <span className="flex h-5 items-center text-text-secondary">
+                <TypingDots size={6} />
+              </span>
+            ) : (
+              <span className={`truncate text-sm ${unread ? "font-medium text-text-primary" : "text-text-secondary"}`}>
+                {previewText(chat)}
+              </span>
+            )}
             <span className="ml-auto flex shrink-0 items-center text-text-secondary">
               {unread ? <UnreadBadge count={chat.unread_count} /> : status && <StatusTicks status={status} />}
             </span>

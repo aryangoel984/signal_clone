@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     demo_bot_phones: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["+15550000001", "+15550000002"]
     )
+    demo_bot_delay_scale: float = 1.0  # multiplies the bots' delays; 0 in tests
 
     @field_validator("cors_origins", "demo_bot_phones", mode="before")
     @classmethod

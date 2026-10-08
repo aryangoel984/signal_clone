@@ -53,6 +53,9 @@
   --toggle-off: #f5f5f5;
   --toggle-knob: #ffffff;
 
+  /* online dot. Signal itself shows no presence (the assignment asks for it), so not sampled */
+  --presence-online: #2e9e44;
+
   /* status */
   --danger: #de3622;
   --danger-bg: #fdf3f2;
@@ -139,6 +142,7 @@
     --toggle-off: #313131;
     --toggle-knob: #eff0fe;
 
+    --presence-online: #4cbb5c;
     --danger: #ec5946;
     --danger-bg: #3b2927;
 
@@ -186,6 +190,7 @@
   --toggle-off: #313131;
   --toggle-knob: #eff0fe;
 
+  --presence-online: #4cbb5c;
   --danger: #ec5946;
   --danger-bg: #3b2927;
 

@@ -7,7 +7,9 @@ import { Avatar } from "@/components/Avatar";
 import { IconButton } from "@/components/IconButton";
 import { belowElement, Menu, type MenuItem, type MenuPosition } from "@/components/Menu";
 import { ApiError, apiRequest } from "@/lib/api";
+import { formatLastSeen } from "@/lib/format-time";
 import { useConversations } from "@/store/conversations";
+import { usePresence } from "@/store/presence";
 import { COMING_SOON, showToast } from "@/store/toasts";
 import type { ConversationDetail } from "@/types/conversation";
 
@@ -21,6 +23,11 @@ export function ChatHeader({ conversation, onChanged }: ChatHeaderProps) {
   const loadChats = useConversations((state) => state.loadChats);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
   const isGroup = conversation.type === "group";
+  const presence = usePresence(conversation.other_user_id, {
+    online: conversation.other_user_online ?? false,
+    lastSeenAt: conversation.other_user_last_seen_at,
+  });
+  const subtitle = isGroup ? null : presence.online ? "Online" : formatLastSeen(presence.lastSeenAt);
 
   async function run(action: () => Promise<ConversationDetail>, done: string) {
     try {
@@ -57,7 +64,10 @@ export function ChatHeader({ conversation, onChanged }: ChatHeaderProps) {
   return (
     <header className="relative z-10 flex h-[52px] shrink-0 items-center gap-3 bg-chat px-4 shadow-[0_2px_10px_var(--header-shadow)]">
       <Avatar name={conversation.title} color={conversation.avatar_color} imageUrl={conversation.avatar_url} size={32} isGroup={isGroup} />
-      <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{conversation.title}</h1>
+      <div className="min-w-0 flex-1">
+        <h1 className="truncate text-sm font-semibold text-text-primary">{conversation.title}</h1>
+        {subtitle && <p className="truncate text-xs text-text-secondary">{subtitle}</p>}
+      </div>
       <div className="flex items-center gap-2">
         <IconButton icon={Video} label="Video call" onClick={() => showToast(COMING_SOON)} />
         {!isGroup && <IconButton icon={Phone} label="Voice call" onClick={() => showToast(COMING_SOON)} />}

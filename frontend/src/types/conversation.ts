@@ -22,6 +22,8 @@ export type ConversationSummary = {
   avatar_url: string | null;
   avatar_color: string;
   other_user_id: number | null;
+  other_user_online: boolean | null;
+  other_user_last_seen_at: string | null;
   is_contact: boolean | null;
   member_count: number;
   is_pinned: boolean;

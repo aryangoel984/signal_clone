@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { apiRequest } from "@/lib/api";
+import { usePresenceStore } from "@/store/presence";
 import type { ConversationDetail, ConversationSummary, PreferenceChanges } from "@/types/conversation";
 
 type ConversationsState = {
@@ -10,15 +11,33 @@ type ConversationsState = {
   loadArchived: () => Promise<void>;
   setPreferences: (conversationId: number, changes: PreferenceChanges) => Promise<ConversationDetail>;
   openDirect: (userId: number) => Promise<ConversationDetail>;
+  /** Debounced reload for bursts of realtime events. */
+  refreshSoon: () => void;
 };
 
-// Lists are refetched after every change. Live updates arrive with WebSockets in phase 5.
+const REFRESH_DEBOUNCE_MS = 150;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Lists are refetched after my own changes and (debounced) after realtime events.
 export const useConversations = create<ConversationsState>()((set, get) => ({
   chats: null,
   archived: null,
 
   loadChats: async () => {
-    set({ chats: await apiRequest<ConversationSummary[]>("/conversations") });
+    const requestedAt = Date.now();
+    const chats = await apiRequest<ConversationSummary[]>("/conversations");
+    set({ chats });
+    // The list carries the server's presence for DM partners. It corrects stale live state
+    // (e.g. after a reconnect missed offline events) but never overrides a newer live event.
+    usePresenceStore.getState().mergeSnapshot(
+      chats
+        .filter((chat) => chat.other_user_id !== null)
+        .map((chat) => [
+          chat.other_user_id as number,
+          { online: chat.other_user_online ?? false, lastSeenAt: chat.other_user_last_seen_at },
+        ]),
+      requestedAt,
+    );
   },
 
   loadArchived: async () => {
@@ -41,5 +60,13 @@ export const useConversations = create<ConversationsState>()((set, get) => ({
     });
     await get().loadChats();
     return detail;
+  },
+
+  refreshSoon: () => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      get().loadChats().catch(() => undefined);
+    }, REFRESH_DEBOUNCE_MS);
   },
 }));

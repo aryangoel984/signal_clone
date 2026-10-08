@@ -24,6 +24,8 @@ class ConversationSummary(BaseModel):
     avatar_url: str | None
     avatar_color: str
     other_user_id: int | None  # DMs only
+    other_user_online: bool | None  # DMs only: has an open connection (bots always)
+    other_user_last_seen_at: datetime | None  # DMs only
     is_contact: bool | None  # DMs only: is the other person in my contacts?
     member_count: int
     is_pinned: bool

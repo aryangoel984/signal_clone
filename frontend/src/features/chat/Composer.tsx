@@ -4,10 +4,12 @@ import { ArrowUp, File, Image as ImageIcon, ListChecks, Mic, Plus, Smile } from 
 import { type KeyboardEvent, useRef, useState } from "react";
 
 import { IconButton } from "@/components/IconButton";
+import { useTypingSender } from "@/hooks/useTypingSender";
 import { Menu, type MenuPosition } from "@/components/Menu";
 import { COMING_SOON, showToast } from "@/store/toasts";
 
 type ComposerProps = {
+  conversationId: number;
   onSend: (text: string) => void;
   disabledReason?: string; // e.g. removed from the group: replaces the composer
 };
@@ -16,8 +18,9 @@ const MAX_LINES = 6;
 const LINE_HEIGHT_PX = 20;
 
 /** Signal's composer: emoji, auto-growing "Message" field, mic that becomes send, and +. */
-export function Composer({ onSend, disabledReason }: ComposerProps) {
+export function Composer({ conversationId, onSend, disabledReason }: ComposerProps) {
   const [text, setText] = useState("");
+  const typing = useTypingSender(conversationId);
   const [attachMenu, setAttachMenu] = useState<MenuPosition | null>(null);
   const field = useRef<HTMLTextAreaElement>(null);
 
@@ -33,6 +36,7 @@ export function Composer({ onSend, disabledReason }: ComposerProps) {
   function send() {
     const trimmed = text.trim();
     if (!trimmed) return;
+    typing.stopped();
     onSend(trimmed);
     setText("");
     if (field.current) {
@@ -63,7 +67,10 @@ export function Composer({ onSend, disabledReason }: ComposerProps) {
         onChange={(event) => {
           setText(event.target.value);
           resize(event.target);
+          if (event.target.value.trim()) typing.typed();
+          else typing.stopped();
         }}
+        onBlur={typing.stopped}
         onKeyDown={handleKeyDown}
         className="min-h-[34px] flex-1 resize-none rounded-[18px] bg-composer px-4 py-[7px] text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted focus:ring-1 focus:ring-primary"
       />

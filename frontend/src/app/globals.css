@@ -35,6 +35,7 @@
   --color-toggle-off: var(--toggle-off);
   --color-toggle-knob: var(--toggle-knob);
 
+  --color-presence-online: var(--presence-online);
   --color-danger: var(--danger);
   --color-danger-bg: var(--danger-bg);
 
@@ -48,4 +49,18 @@
 body {
   background: var(--bg-chat);
   color: var(--text-primary);
+}
+
+/* Typing indicator: three dots pulsing in turn. */
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.35; transform: scale(0.85); }
+  30% { opacity: 1; transform: scale(1); }
+}
+.typing-dot {
+  animation: typing-dot 1.2s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+@media (prefers-reduced-motion: reduce) {
+  .typing-dot { animation: none; }
 }

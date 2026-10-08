@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.core.db import get_db
 from app.models import User, UserSession
 from app.services import auth_service
+from app.ws.realtime import Realtime
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -50,3 +51,11 @@ def get_settings_from_app(request: Request) -> Settings:
 
 
 AppSettings = Annotated[Settings, Depends(get_settings_from_app)]
+
+
+def get_realtime(request: Request) -> Realtime:
+    realtime: Realtime = request.app.state.realtime
+    return realtime
+
+
+RealtimeDep = Annotated[Realtime, Depends(get_realtime)]
