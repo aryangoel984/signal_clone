@@ -1,4 +1,4 @@
-import { Copy, Ellipsis, Info, Reply, SmilePlus } from "lucide-react";
+import { Ban, Copy, Ellipsis, Info, Reply, SmilePlus, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -8,7 +8,7 @@ import { StatusTicks } from "@/components/StatusTicks";
 import { formatBubbleTime } from "@/lib/format-time";
 import { nameColor } from "@/lib/name-color";
 import { showToast } from "@/store/toasts";
-import type { ChatMessage, ReactionEmoji } from "@/types/message";
+import { type ChatMessage, DELETE_FOR_EVERYONE_WINDOW_MS, type ReactionEmoji } from "@/types/message";
 
 import { QuoteBlock } from "./QuoteBlock";
 import { pickerPositionFor, ReactionPicker } from "./ReactionPicker";
@@ -28,6 +28,7 @@ type MessageBubbleProps = {
   onReply: (message: ChatMessage) => void;
   onReact: (messageId: number, emoji: ReactionEmoji | null) => void;
   onJumpTo: (messageId: number) => void;
+  onDelete: (messageId: number) => void; // asks for confirmation first
 };
 
 const AVATAR_SIZE = 28;
@@ -35,9 +36,17 @@ const AVATAR_SIZE = 28;
 export function MessageBubble(props: MessageBubbleProps) {
   const { message, myId, mine, first, last, isGroup, highlighted } = props;
   const [menu, setMenu] = useState<MenuPosition | null>(null);
+  const [canDelete, setCanDelete] = useState(false); // decided when the menu opens (24 h window)
   const [picker, setPicker] = useState<MenuPosition | null>(null);
   const bubble = useRef<HTMLDivElement>(null);
   const confirmed = message.id > 0 && !message.localStatus;
+  const actionable = confirmed && !message.deleted; // a tombstone has no reply/react/menu
+
+  function openMenu(position: MenuPosition) {
+    const age = Date.now() - new Date(message.created_at).getTime();
+    setCanDelete(mine && age < DELETE_FOR_EVERYONE_WINDOW_MS);
+    setMenu(position);
+  }
   const quote = message.quote;
   const myReaction = message.reactions.find((reaction) => reaction.user_id === myId)?.emoji ?? null;
 
@@ -55,7 +64,7 @@ export function MessageBubble(props: MessageBubbleProps) {
         size={16}
         label="Message actions"
         className="text-text-secondary"
-        onClick={(event) => setMenu(belowElement(event.currentTarget))}
+        onClick={(event) => openMenu(belowElement(event.currentTarget))}
       />
     </div>
   );
@@ -74,7 +83,7 @@ export function MessageBubble(props: MessageBubbleProps) {
         first ? "mt-3" : "mt-0.5"
       } ${message.reactions.length > 0 ? "mb-1.5" : ""} ${highlighted ? "bg-primary/15" : ""}`}
     >
-      {mine && confirmed && actions}
+      {mine && actionable && actions}
       {showGroupDetails &&
         (last ? (
           <Avatar name={message.sender_name} color={message.sender_avatar_color ?? "A210"} imageUrl={message.sender_avatar_url} size={AVATAR_SIZE} />
@@ -85,9 +94,9 @@ export function MessageBubble(props: MessageBubbleProps) {
         <div
           ref={bubble}
           onContextMenu={(event) => {
-            if (!confirmed) return;
+            if (!actionable) return;
             event.preventDefault();
-            setMenu({ top: event.clientY, left: event.clientX });
+            openMenu({ top: event.clientY, left: event.clientX });
           }}
           data-message-id={!mine && message.id > 0 ? message.id : undefined}
           className={`rounded-[18px] px-3 py-[7px] text-sm leading-5 ${corners} ${
@@ -108,7 +117,8 @@ export function MessageBubble(props: MessageBubbleProps) {
               />
             </div>
           )}
-          <div className="break-words whitespace-pre-wrap">
+          <div className={`break-words whitespace-pre-wrap ${message.deleted ? "italic opacity-80" : ""}`}>
+            {message.deleted && <Ban size={14} strokeWidth={2} className="mr-1.5 inline-block align-[-2px]" aria-hidden />}
             {message.text}
             {last && (
               <span
@@ -129,7 +139,7 @@ export function MessageBubble(props: MessageBubbleProps) {
           </button>
         )}
       </div>
-      {!mine && confirmed && actions}
+      {!mine && actionable && actions}
       {menu && (
         <Menu
           position={menu}
@@ -147,6 +157,7 @@ export function MessageBubble(props: MessageBubbleProps) {
                   .then(() => showToast("Copied"))
                   .catch(() => showToast("Couldn't copy")),
             },
+            ...(canDelete ? [{ label: "Delete for everyone", icon: Trash2, danger: true, onSelect: () => props.onDelete(message.id) }] : []),
           ]}
         />
       )}

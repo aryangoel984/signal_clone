@@ -153,7 +153,7 @@ Why per-user prefs live here: pinned, archived, muted and unread are properties 
 | reply_to_id | INTEGER NULL FK → messages ON DELETE SET NULL | Bonus: quoted replies. |
 | expires_at | DATETIME NULL | Bonus: disappearing messages. Computed at insert from `disappearing_seconds`. |
 | created_at | DATETIME NOT NULL | Server time, which sets the order. |
-| deleted_at | DATETIME NULL | "Delete for everyone" leaves a tombstone instead of a hole. |
+| deleted_at | DATETIME NULL | "Delete for everyone" leaves a tombstone instead of a hole: the row stays (ids, receipts, the timeline and replies' `reply_to_id` stay intact) with `body = ''` and `reply_to_id = NULL`, and its reactions are deleted. Shown as "This message was deleted" (Signal's wording) in the bubble and the chat-list preview. A deleted message doesn't count as unread, has no ticks, and can't be quoted, replied to, reacted to or inspected (Message details). |
 
 Keys and constraints: `UNIQUE(sender_id, client_id)`. If a client retries a send after a network blip, the server returns the existing row instead of a duplicate. NULL `client_id`s (system messages) never collide. CHECK `kind = 'system' OR system_data IS NULL`.
 Indexes:
@@ -263,7 +263,7 @@ Conventions: JSON throughout. Errors are `{ "detail": "..." }`. Every endpoint e
   - Uploads are type-checked and served with `nosniff`.
   - Logout really revokes the token server-side.
   - Only hashes are stored server-side.
-  - **Planned for phase 9:** a nonce-based Content-Security-Policy. It needs `proxy.ts`, because Next's inline hydration scripts break a plain `script-src 'self'`.
+  - **Not built:** a nonce-based Content-Security-Policy (it would need `proxy.ts`, because Next's inline hydration scripts break a plain `script-src 'self'`). Listed in the README's known limitations.
 - **`localStorage`, not `sessionStorage`:** the session must survive reloads and new tabs.
 - **Reloads:**
   - The server render and the first client render show a neutral splash.
@@ -314,7 +314,7 @@ Media: `/media/*` serves `UPLOADS_DIR` through `MediaFiles` (`core/media.py`), a
 | GET | `/conversations/{id}/messages?before=<id>&limit=50` | One page of messages **visible to me** (1.6), oldest first, as `{items, next_cursor}`. `next_cursor` is the oldest id in the page (pass it as `before`), or null when nothing is older. `limit` 1–100. Former members can read up to their removal. Items are `MessageOut`: `id, conversation_id, client_id` (mine only), `kind, text` (system text worded for the viewer), `sender_id, sender_name` (null for mine/system), `sender_avatar_color, sender_avatar_url, created_at, status` (mine only, computed for the whole page in one receipts query), `reply_to_id`, `quote {id, sender_id, author_name, text}` (`author_name` is "You" for mine; **null when I can't see the original**, e.g. it was sent before I joined or by someone I blocked after the block; the UI then shows "Original message not found"), and `reactions [{user_id, emoji}]` (oldest first, minus reactions from people I blocked). Quotes and reactions are loaded for the whole page in a fixed number of queries. |
 | GET | `/conversations/{id}/messages?after=<id>` | Messages newer than `after`, oldest first (catch-up after a reconnect), up to `limit`. |
 | POST | `/conversations/{id}/messages` | `{client_id, body}`. `body` trimmed, 1–4000 characters, inner newlines kept. `client_id` `^[A-Za-z0-9_\-:]{8,64}$`. One transaction: insert the message, add a receipt row for each active member except me (and anyone who blocked me), update `last_message_at`, move **my** watermark to the new id. Returns 201 with the message (`status: "sent"`). Same `client_id` again → 200 with the original message (also when two retries race: the UNIQUE violation is caught). The same `client_id` in another conversation → 409. Not an active member → 403. Optional `reply_to_id`: must be a text message of **this** conversation that I can see, else 400 `Can't reply to that message`. `attachment_ids` isn't built (phase 8 was limited to replies and reactions). |
-| DELETE | `/messages/{id}` | Delete for everyone (sender only), sets `deleted_at` |
+| DELETE | `/messages/{id}` | Delete for everyone. **Sender only** (403), while still an **active member** (403), within **24 hours** of sending (Signal's limit per support.signal.org; older → 403 "Messages can only be deleted for everyone within 24 hours of sending"), and the message must be visible to me (404). Tombstones it (1.7) and, after the commit, sends `message.deleted`. Deleting again → 204, no event. In `MessageOut`, `deleted: true` and `text` is the tombstone; quotes of a deleted message are null ("Original message not found"). |
 | GET | `/messages/{id}/receipts` | "Message details" for **my** text message: `{message_id, sent_at, recipients: [{user_id, name, avatar_color, avatar_url, delivered_at, read_at}]}`. **Current members only** (same rule as ticks, 1.8). `read_at` is hidden if *my* read receipts are off (7.4). 404 if I can't see the message (or it's a system message); 403 if I can see it but didn't send it. |
 | PUT | `/messages/{id}/reaction` | `{emoji}`, one of Signal's defaults `❤️ 👍 👎 😂 😮 😢` (anything else → 422). SQLite upsert on `(message_id, user_id)`, so changing it replaces mine. Same rules as sending: active member (removed → 403), not in a DM with someone I blocked (403), and I must see the message (404 otherwise, also for system messages). 204, then `reaction.updated`. |
 | DELETE | `/messages/{id}/reaction` | Remove my reaction. 204, idempotent (`reaction.updated` only if something was removed). |
@@ -409,6 +409,7 @@ Emitted on the first socket connect (online) and when the last socket closes (of
 `change` is one of `created | renamed | avatar_changed | members_added | member_removed | member_left | role_changed`. Payload: `{conversation_id, change, actor_id, target_ids}`. **No conversation snapshot (changed from the original plan):** clients refetch `GET /conversations/{id}`, which keeps names and `can_send` worded for each viewer. The system line arrives separately as `message.new`. A removed member gets both events, then **no later `message.new`** for that group (tested).
 
 **`reaction.updated`**: `{conversation_id, message_id, user_id, emoji | null}` (null = removed), sent to the active members, including the reactor's other tabs, **except people who blocked the reactor**. Clients patch that one user's reaction; ids they haven't loaded are ignored.
+**`message.deleted`**: `{conversation_id, message_id}`, sent to every member whose visible range holds the message (active members, the sender's other tabs, and removed members still reading that history). Clients turn it into the tombstone, clear its reactions, drop quotes of it, and refresh the chat list. Blocking still applies through the REST views: a message hidden from a blocker stays hidden as a tombstone too.
 **`error`**: `{detail, ref_type?}` for invalid client frames. The socket stays open.
 
 ### Connection lifecycle
@@ -499,7 +500,7 @@ AppShell
 | 5 | **Real-time** | WS manager + auth, `message.new`, delivery on push/connect, `message.status`, typing, presence, client reconnect + catch-up. Seed bot (section 8). Redeploy to the 2b hosts to confirm `wss://` works. | Two browsers: instant delivery, ✓ → ✓✓ → read, typing within ~300 ms, online/last-seen update, reconnect recovers missed messages. One browser: messaging a bot shows ✓✓ → read → typing → reply. |
 | 6 | **Groups** | Create group flow, members panel, add/remove/promote/leave with admin checks, system messages, `group.updated`, per-member receipts + Message details. | Three users in a group with everything in sync. pytest group permission tests pass. |
 | 7 | **Signal polish** | Settings pages (bound to `user_settings`), Coming Soon screens, toasts, context menus, hover actions, dark mode toggle, responsive single-pane mobile layout, screenshot diff against `docs/reference/`. | A side-by-side review against the references shows no obvious differences. |
-| 8 | **Bonus**, limited to replies + reactions | Reply/quote (hover/context action, composer preview, quote in the bubble that jumps to the original, loading older pages if needed) and reactions (picker with Signal's 6 defaults, pills, one per user, `reaction.updated`). Attachments, disappearing messages, shortcuts and delete-for-everyone were not built. | Both work end to end in two browsers; pytest covers validation, visibility, permissions, blocks and the WS events. |
+| 8 | **Bonus**, limited to replies + reactions | Reply/quote (hover/context action, composer preview, quote in the bubble that jumps to the original, loading older pages if needed) and reactions (picker with Signal's 6 defaults, pills, one per user, `reaction.updated`). Attachments, disappearing messages and shortcuts were not built. Delete-for-everyone was added afterwards (24 h window, `message.deleted`). | Both work end to end in two browsers; pytest covers validation, visibility, permissions, blocks and the WS events. |
 | 9 | **Ship (final deploy)** | README (setup, architecture, ER/table list, API overview, assumptions, demo login, bot accounts). Final deploy to the same hosts as 2b: `app.db` and `uploads/` on the persistent volume. Boot runs the idempotent seed. If a clean demo dataset is wanted, run `--reset` once **by hand** before submitting (never on boot). Then a smoke test of every core feature on the public URLs. | The public link works with seeded data, logging in with phone + `123456`, and a single-browser demo with a bot works end to end. |
 
 ## 5a. Phase 2b outcome (deploy files)
@@ -516,7 +517,7 @@ AppShell
 
 ## 6. Assumptions
 - One backend process (the in-memory WS manager). Horizontal scaling would need Redis pub/sub.
-- "Encryption" appears only as UI notices. There's no cryptography.
+- "Encryption" appears only as a UI notice: "Messages and chat info are protected by end-to-end encryption" (Signal's own wording) under the intro card of every chat. There's no cryptography.
 - OTP is fixed at `123456`. No SMS is sent.
 - Read receipts off: see 7.4.
 

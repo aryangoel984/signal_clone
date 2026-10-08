@@ -1,5 +1,11 @@
 import type { MessageKind, MessageStatus } from "@/types/conversation";
 
+/** Signal's tombstone text (same as the backend's DELETED_TEXT). */
+export const DELETED_TEXT = "This message was deleted";
+
+/** Signal allows "Delete for everyone" within 24 hours of sending (the backend enforces it too). */
+export const DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /** Signal's default reaction set; the backend accepts only these (`ReactionEmoji`). */
 export const REACTION_EMOJI = ["❤️", "👍", "👎", "😂", "😮", "😢"] as const;
 export type ReactionEmoji = (typeof REACTION_EMOJI)[number];
@@ -27,6 +33,7 @@ export type Message = {
   sender_avatar_url: string | null;
   created_at: string;
   status: MessageStatus | null;
+  deleted: boolean; // deleted for everyone: text is the tombstone, no quote or reactions
   reply_to_id: number | null;
   quote: Quote | null; // null on a reply whose original I can't see: "Original message not found"
   reactions: Reaction[]; // oldest first, one per user

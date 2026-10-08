@@ -253,6 +253,22 @@ def test_reaction_updates_are_pushed_to_members(live: TestClient) -> None:
     assert to_alex == expected and to_priya == expected
 
 
+def test_delete_for_everyone_is_pushed_to_members(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+    sent = send(live, alex, dm, "Delete me", "ws-delete-0001")
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws, live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(alex_ws)
+        drain(priya_ws)
+        assert live.delete(f"/api/v1/messages/{sent['id']}", headers=auth(alex)).status_code == 204
+
+        to_priya = of_type(drain(priya_ws), "message.deleted")
+        to_alex = of_type(drain(alex_ws), "message.deleted")  # my other tabs
+
+    assert to_priya == to_alex == [{"conversation_id": dm, "message_id": sent["id"]}]
+
+
 # --- typing ------------------------------------------------------------------------------------
 
 

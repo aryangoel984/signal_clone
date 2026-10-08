@@ -38,7 +38,8 @@ class MessageOut(BaseModel):
     sender_avatar_color: str | None
     sender_avatar_url: str | None
     created_at: datetime
-    status: MessageStatus | None  # only for my own text messages
+    status: MessageStatus | None  # only for my own text messages (null once deleted)
+    deleted: bool  # deleted for everyone: `text` is "This message was deleted", no quote or reactions
     reply_to_id: int | None
     quote: Quote | None  # null on a reply whose original the viewer can't see ("Original message not found")
     reactions: list[ReactionOut]  # oldest first; one per user; minus users the viewer blocked

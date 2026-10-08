@@ -12,6 +12,8 @@ from app.models import Block, ConversationMember, Message, MessageReceipt, User,
 from app.models import Conversation
 from app.models.enums import MessageKind, MessageStatus
 
+DELETED_TEXT = "This message was deleted"  # Signal's wording, shown in the bubble and the chat-list preview
+
 
 def not_from_blocked(viewer_id: int) -> ColumnElement[bool]:
     """Excludes messages (including system lines, e.g. renames) from users the viewer blocked,
@@ -38,6 +40,7 @@ async def unread_count(session: AsyncSession, member: ConversationMember) -> int
         visible_to(member),
         Message.id > member.last_read_message_id,
         Message.kind == MessageKind.TEXT,
+        Message.deleted_at.is_(None),  # a deleted message has nothing left to read
         or_(Message.sender_id.is_(None), Message.sender_id != member.user_id),
     )
     return (await session.execute(query)).scalar_one()

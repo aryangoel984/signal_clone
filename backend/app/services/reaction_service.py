@@ -10,6 +10,7 @@ from app.core.time import utc_now
 from app.models import Reaction, User
 from app.models.enums import ConversationType
 from app.services.message_service import (
+    MessageNotFoundError,
     NotActiveMemberError,
     RecipientBlockedError,
     i_blocked_the_other,
@@ -23,6 +24,8 @@ async def set_reaction(session: AsyncSession, realtime: Realtime, viewer: User, 
     members, and not in a DM with someone I blocked. Raises MessageNotFoundError,
     NotActiveMemberError or RecipientBlockedError."""
     message, member, conversation = await load_visible_message(session, viewer, message_id)
+    if message.deleted_at is not None:
+        raise MessageNotFoundError  # nothing left to react to
     if member.left_at is not None:
         raise NotActiveMemberError
     if conversation.type is ConversationType.DIRECT and await i_blocked_the_other(session, conversation.id, viewer.id):

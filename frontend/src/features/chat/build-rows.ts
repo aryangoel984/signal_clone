@@ -18,7 +18,7 @@ export type UnreadMarker = { beforeId: number; count: number } | null;
 /** Where the "N Unread Messages" divider goes, computed once when the chat opens so that
  *  messages arriving while it's open don't create or move it. */
 export function unreadMarker(messages: ChatMessage[], myId: number, lastReadId: number): UnreadMarker {
-  const unread = messages.filter((m) => m.id > lastReadId && m.kind === "text" && m.sender_id !== myId);
+  const unread = messages.filter((m) => m.id > lastReadId && m.kind === "text" && !m.deleted && m.sender_id !== myId);
   return unread[0] ? { beforeId: unread[0].id, count: unread.length } : null;
 }
 

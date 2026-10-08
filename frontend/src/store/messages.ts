@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useConversations } from "@/store/conversations";
 import type { MessageStatus } from "@/types/conversation";
-import type { ChatMessage, Message, MessagePage, Quote, ReactionEmoji } from "@/types/message";
+import { type ChatMessage, DELETED_TEXT, type Message, type MessagePage, type Quote, type ReactionEmoji } from "@/types/message";
 
 type Thread = {
   items: ChatMessage[]; // oldest first; my unconfirmed messages are at the end
@@ -32,6 +32,10 @@ type MessagesState = {
   react: (conversationId: number, messageId: number, myId: number, emoji: ReactionEmoji | null) => Promise<void>;
   /** One user's reaction changed (reaction.updated, or my own optimistic change). */
   applyReaction: (conversationId: number, messageId: number, userId: number, emoji: string | null) => void;
+  /** Deletes my message for everyone (the server checks sender and time window). */
+  deleteForEveryone: (conversationId: number, messageId: number) => Promise<void>;
+  /** A message became a tombstone (message.deleted, or my own delete): clear it and quotes of it. */
+  applyDeleted: (conversationId: number, messageId: number) => void;
   /** After a reconnect: fetch everything newer than what's loaded. */
   catchUp: (conversationId: number) => Promise<void>;
 };
@@ -130,6 +134,7 @@ export const useMessages = create<MessagesState>()((set, get) => {
         sender_avatar_url: null,
         created_at: new Date().toISOString(),
         status: null,
+        deleted: false,
         reply_to_id: replyTo?.id ?? null,
         quote: replyTo ? quoteOf(replyTo, me.id) : null,
         reactions: [],
@@ -204,6 +209,24 @@ export const useMessages = create<MessagesState>()((set, get) => {
           // A changed reaction keeps its place (the server updates the row, created_at stays).
           if (mine) return { ...item, reactions: item.reactions.map((r) => (r.user_id === userId ? { ...r, emoji } : r)) };
           return { ...item, reactions: [...others, { user_id: userId, emoji }] };
+        }),
+      }));
+    },
+
+    deleteForEveryone: async (conversationId, messageId) => {
+      await apiRequest<void>(`/messages/${messageId}`, { method: "DELETE" });
+      get().applyDeleted(conversationId, messageId);
+      void useConversations.getState().loadChats(); // the preview may now be the tombstone
+    },
+
+    applyDeleted: (conversationId, messageId) => {
+      update(conversationId, (current) => ({
+        items: current.items.map((item) => {
+          if (item.id === messageId) {
+            return { ...item, deleted: true, text: DELETED_TEXT, status: null, reply_to_id: null, quote: null, reactions: [] };
+          }
+          // Replies to it keep reply_to_id but lose the quote: "Original message not found".
+          return item.quote?.id === messageId ? { ...item, quote: null } : item;
         }),
       }));
     },

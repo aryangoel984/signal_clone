@@ -41,6 +41,11 @@ class GroupUpdated(BaseModel):
     target_ids: list[int]
 
 
+class MessageDeleted(BaseModel):
+    conversation_id: int
+    message_id: int
+
+
 class ReactionUpdated(BaseModel):
     conversation_id: int
     message_id: int

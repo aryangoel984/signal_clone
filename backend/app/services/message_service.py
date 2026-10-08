@@ -1,8 +1,9 @@
 """Message history and sending (PLAN 1.7, 1.8, section 2 "Messages")."""
 
 from collections.abc import Sequence
+from datetime import timedelta
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import delete, exists, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,12 +12,21 @@ from app.models import Block, Conversation, ConversationMember, Message, Message
 from app.models.enums import ConversationType, MessageKind
 from app.schemas.message import MessageDetails, MessageOut, MessagePage, Quote, ReactionOut, Recipient
 from app.services.conversation_service import ConversationNotFoundError, load_membership
-from app.services.message_queries import current_member_receipts, statuses_for, visible_to
+from app.services.message_queries import DELETED_TEXT, current_member_receipts, statuses_for, visible_to
 from app.services.names import describe_system_message, display_names, user_ids_in
 from app.ws.realtime import Realtime
 
 
+# Signal allows "Delete for everyone" on messages sent within the past 24 hours
+# (support.signal.org, "Delete for everyone").
+DELETE_FOR_EVERYONE_WINDOW = timedelta(hours=24)
+
+
 class NotActiveMemberError(Exception):
+    pass
+
+
+class DeleteWindowExpiredError(Exception):
     pass
 
 
@@ -142,6 +152,7 @@ async def serialize(session: AsyncSession, viewer: User, messages: Sequence[Mess
     for message in messages:
         is_system = message.kind is MessageKind.SYSTEM
         is_mine = message.sender_id == viewer.id
+        is_deleted = message.deleted_at is not None
         sender = senders.get(message.sender_id) if message.sender_id is not None else None
         text = describe_system_message(message, viewer.id, names) if is_system else _text_of(message)
         original = originals.get(message.reply_to_id) if message.reply_to_id is not None else None
@@ -157,7 +168,8 @@ async def serialize(session: AsyncSession, viewer: User, messages: Sequence[Mess
                 sender_avatar_color=sender.avatar_color if sender else None,
                 sender_avatar_url=sender.avatar_url if sender else None,
                 created_at=message.created_at,
-                status=statuses.get(message.id),
+                status=None if is_deleted else statuses.get(message.id),
+                deleted=is_deleted,
                 reply_to_id=message.reply_to_id,
                 quote=_quote(original, viewer.id, names) if original else None,
                 reactions=reactions.get(message.id, []),
@@ -181,11 +193,35 @@ async def load_visible_message(session: AsyncSession, viewer: User, message_id: 
     return message, member, conversation
 
 
+async def delete_for_everyone(session: AsyncSession, realtime: Realtime, viewer: User, message_id: int) -> None:
+    """Turns my message into a tombstone for everyone: text, quote and reactions are cleared,
+    the row stays (so ids, receipts and the timeline stay intact). Only the sender, while still
+    an active member, within DELETE_FOR_EVERYONE_WINDOW. Deleting again is a no-op.
+    Raises MessageNotFoundError, NotSenderError, NotActiveMemberError, DeleteWindowExpiredError."""
+    message, member, _ = await load_visible_message(session, viewer, message_id)
+    if message.sender_id != viewer.id:
+        raise NotSenderError
+    if message.deleted_at is not None:
+        return
+    if member.left_at is not None:
+        raise NotActiveMemberError
+    now = utc_now()
+    if now - message.created_at > DELETE_FOR_EVERYONE_WINDOW:
+        raise DeleteWindowExpiredError
+
+    message.deleted_at = now
+    message.body = ""
+    message.reply_to_id = None
+    await session.execute(delete(Reaction).where(Reaction.message_id == message_id))
+    await session.commit()
+    await realtime.message_deleted(message.conversation_id, message_id)
+
+
 # --- helpers ---------------------------------------------------------------------------------
 
 
 def _text_of(message: Message) -> str:
-    return "This message was deleted." if message.deleted_at is not None else message.body
+    return DELETED_TEXT if message.deleted_at is not None else message.body
 
 
 def _quote(original: Message, viewer_id: int, names: dict[int, str]) -> Quote:
@@ -200,16 +236,19 @@ def _quote(original: Message, viewer_id: int, names: dict[int, str]) -> Quote:
 
 
 async def _can_quote(session: AsyncSession, member: ConversationMember, message_id: int) -> bool:
-    """Only a text message of this conversation that the sender can see."""
+    """Only a text message of this conversation that the sender can see, and not deleted."""
     found = await session.scalar(
-        select(Message.id).where(Message.id == message_id, Message.kind == MessageKind.TEXT, visible_to(member))
+        select(Message.id).where(
+            Message.id == message_id, Message.kind == MessageKind.TEXT, Message.deleted_at.is_(None), visible_to(member)
+        )
     )
     return found is not None
 
 
 async def _visible_originals(session: AsyncSession, viewer_id: int, messages: Sequence[Message]) -> dict[int, Message]:
     """The quoted originals of these replies, keeping only those the viewer may see (an original
-    sent before they joined, or by someone they blocked after blocking, stays hidden)."""
+    sent before they joined, or by someone they blocked after blocking, stays hidden) and that
+    weren't deleted for everyone. A hidden original shows as "Original message not found"."""
     reply_ids = {m.reply_to_id for m in messages if m.reply_to_id is not None}
     if not reply_ids:
         return {}
@@ -224,7 +263,12 @@ async def _visible_originals(session: AsyncSession, viewer_id: int, messages: Se
     if not members:
         return {}
     rows = await session.execute(
-        select(Message).where(Message.id.in_(reply_ids), Message.kind == MessageKind.TEXT, or_(*(visible_to(m) for m in members)))
+        select(Message).where(
+            Message.id.in_(reply_ids),
+            Message.kind == MessageKind.TEXT,
+            Message.deleted_at.is_(None),
+            or_(*(visible_to(m) for m in members)),
+        )
     )
     return {message.id: message for message in rows.scalars()}
 
@@ -281,6 +325,8 @@ async def get_details(session: AsyncSession, viewer: User, message_id: int) -> M
     """"Message details" for the sender: each current member's delivered/read time.
     404 if the viewer can't see the message, 403 if they can but didn't send it."""
     message, _, _ = await load_visible_message(session, viewer, message_id)
+    if message.deleted_at is not None:
+        raise MessageNotFoundError
     if message.sender_id != viewer.id:
         raise NotSenderError
 

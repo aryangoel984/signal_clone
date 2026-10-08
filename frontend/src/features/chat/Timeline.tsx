@@ -4,6 +4,7 @@ import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError } from "@/lib/api";
+import { ConfirmDialog } from "@/components/Modal";
 import { useMessages } from "@/store/messages";
 import { showToast } from "@/store/toasts";
 import { useTypingIn } from "@/store/typing";
@@ -14,7 +15,7 @@ import { buildRows, unreadMarker } from "./build-rows";
 import { ConversationHero } from "./ConversationHero";
 import { MessageBubble } from "./MessageBubble";
 import { MessageDetailsModal } from "./MessageDetailsModal";
-import { DateSeparator, SystemMessage, UnreadDivider } from "./TimelineMarkers";
+import { DateSeparator, EncryptionNotice, SystemMessage, UnreadDivider } from "./TimelineMarkers";
 import { TypingIndicator } from "./TypingIndicator";
 
 type TimelineProps = {
@@ -39,6 +40,7 @@ export function Timeline({ conversation, myId, lastReadAtOpen, onReply }: Timeli
   const retry = useMessages((state) => state.retry);
   const markRead = useMessages((state) => state.markRead);
   const react = useMessages((state) => state.react);
+  const deleteForEveryone = useMessages((state) => state.deleteForEveryone);
 
   const scroller = useRef<HTMLDivElement>(null);
   const restoreFromBottom = useRef<number | null>(null); // scroll offset to keep while older messages load
@@ -47,6 +49,7 @@ export function Timeline({ conversation, myId, lastReadAtOpen, onReply }: Timeli
   const [showJump, setShowJump] = useState(false);
   const [detailsFor, setDetailsFor] = useState<number | null>(null);
   const [highlightId, setHighlightId] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const items = useMemo(() => thread?.items ?? [], [thread]);
@@ -127,6 +130,14 @@ export function Timeline({ conversation, myId, lastReadAtOpen, onReply }: Timeli
     );
   }
 
+  function confirmDelete() {
+    if (confirmDeleteId === null) return;
+    deleteForEveryone(conversationId, confirmDeleteId).catch((error: unknown) =>
+      showToast(error instanceof ApiError ? error.detail : "Couldn't delete the message"),
+    );
+    setConfirmDeleteId(null);
+  }
+
   // Read receipts: report the newest incoming message that has been on screen.
   const reportedUpTo = useRef(lastReadAtOpen);
   const seenUpTo = useRef(lastReadAtOpen);
@@ -166,7 +177,12 @@ export function Timeline({ conversation, myId, lastReadAtOpen, onReply }: Timeli
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scroller} onScroll={handleScroll} className="h-full overflow-y-auto px-4 pb-4" aria-label="Messages" role="log">
-        {thread?.loaded && thread.nextCursor === null && <ConversationHero conversation={conversation} />}
+        {thread?.loaded && thread.nextCursor === null && (
+          <>
+            <ConversationHero conversation={conversation} />
+            <EncryptionNotice />
+          </>
+        )}
         {thread?.loadingOlder && <p className="py-3 text-center text-xs text-text-muted">Loading…</p>}
         {rows.map((row) => {
           switch (row.kind) {
@@ -192,6 +208,7 @@ export function Timeline({ conversation, myId, lastReadAtOpen, onReply }: Timeli
                   onReply={onReply}
                   onReact={handleReact}
                   onJumpTo={(id) => void jumpTo(id)}
+                  onDelete={setConfirmDeleteId}
                 />
               );
           }
@@ -203,6 +220,16 @@ export function Timeline({ conversation, myId, lastReadAtOpen, onReply }: Timeli
         )}
       </div>
       {detailsFor !== null && <MessageDetailsModal messageId={detailsFor} onClose={() => setDetailsFor(null)} />}
+      {confirmDeleteId !== null && (
+        <ConfirmDialog
+          title="Delete for everyone?"
+          message="This message will be deleted for everyone in the chat. They will be able to see that you deleted a message."
+          confirmLabel="Delete for everyone"
+          danger
+          onConfirm={confirmDelete}
+          onCancel={() => setConfirmDeleteId(null)}
+        />
+      )}
       {showJump && (
         <button
           type="button"

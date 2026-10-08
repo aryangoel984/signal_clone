@@ -81,6 +81,22 @@ async def message_details(message_id: int, user: CurrentUser, db: DbSession) -> 
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only the sender can see message details") from None
 
 
+@message_router.delete("/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_for_everyone(message_id: int, user: CurrentUser, db: DbSession, realtime: RealtimeDep) -> None:
+    try:
+        await message_service.delete_for_everyone(db, realtime, user, message_id)
+    except message_service.MessageNotFoundError:
+        raise _MESSAGE_NOT_FOUND from None
+    except message_service.NotSenderError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only the sender can delete a message for everyone") from None
+    except message_service.NotActiveMemberError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="You're no longer a member of this group") from None
+    except message_service.DeleteWindowExpiredError:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, detail="Messages can only be deleted for everyone within 24 hours of sending"
+        ) from None
+
+
 @message_router.put("/{message_id}/reaction", status_code=status.HTTP_204_NO_CONTENT)
 async def react(message_id: int, body: ReactRequest, user: CurrentUser, db: DbSession, realtime: RealtimeDep) -> None:
     await _set_reaction(db, realtime, user, message_id, body.emoji)

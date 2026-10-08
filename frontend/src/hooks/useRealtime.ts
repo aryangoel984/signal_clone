@@ -60,6 +60,10 @@ function handle(event: ServerEvent): void {
       useRevisions.getState().bump(event.payload.conversation_id);
       useConversations.getState().refreshSoon();
       break;
+    case "message.deleted":
+      useMessages.getState().applyDeleted(event.payload.conversation_id, event.payload.message_id);
+      useConversations.getState().refreshSoon();
+      break;
     case "reaction.updated": {
       const { conversation_id, message_id, user_id, emoji } = event.payload;
       useMessages.getState().applyReaction(conversation_id, message_id, user_id, emoji);

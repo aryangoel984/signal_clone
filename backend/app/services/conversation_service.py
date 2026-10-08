@@ -16,7 +16,7 @@ from app.schemas.conversation import (
     MemberOut,
     UpdatePreferencesRequest,
 )
-from app.services.message_queries import group_appearance, last_visible_message, statuses_for, unread_count
+from app.services.message_queries import DELETED_TEXT, group_appearance, last_visible_message, statuses_for, unread_count
 from app.services.names import describe_system_message, display_names, user_ids_in
 from app.ws.realtime import Realtime
 
@@ -266,14 +266,14 @@ async def _last_message(
     is_system = message.kind is MessageKind.SYSTEM
     is_mine = message.sender_id == context.viewer_id
     if message.deleted_at is not None:
-        text = "This message was deleted."
+        text = DELETED_TEXT
     elif is_system:
         text = describe_system_message(message, context.viewer_id, names)
     else:
         text = message.body
 
     status = None
-    if is_mine and not is_system:
+    if is_mine and not is_system and message.deleted_at is None:
         status = (await statuses_for(session, context.viewer, [message.id]))[message.id]
 
     return LastMessage(

@@ -29,6 +29,11 @@ export function ChatView({ conversationId }: { conversationId: number }) {
   const [state, setState] = useState<LoadState | null>(null);
   const [view, setView] = useState<"chat" | "settings">("chat");
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // If the message I'm replying to gets deleted for everyone, the reply is dropped (Signal does the same).
+  const replyTargetDeleted = useMessages(
+    (state) => replyTo !== null && state.threads[conversationId]?.items.some((m) => m.id === replyTo.id && m.deleted) === true,
+  );
+  const activeReply = replyTargetDeleted ? null : replyTo;
 
   useEffect(() => {
     let cancelled = false;
@@ -82,10 +87,10 @@ export function ChatView({ conversationId }: { conversationId: number }) {
           conversationId={conversationId}
           myId={me.id}
           onSend={(text) => {
-            void send(conversationId, text, me, replyTo);
+            void send(conversationId, text, me, activeReply);
             setReplyTo(null);
           }}
-          replyTo={replyTo}
+          replyTo={activeReply}
           onCancelReply={() => setReplyTo(null)}
           disabledReason={
             conversation.can_send ? undefined : "You can't send messages to this group because you're no longer a member."

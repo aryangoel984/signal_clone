@@ -19,6 +19,7 @@ from app.services import receipt_service
 from app.services.message_queries import statuses_for
 from app.ws.events import (
     GroupUpdated,
+    MessageDeleted,
     MessageNew,
     MessageStatusChanged,
     PresenceUpdate,
@@ -160,6 +161,22 @@ class Realtime:
                         sender_id,
                         envelope("message.status", MessageStatusChanged(conversation_id=conversation_id, updates=updates)),
                     )
+
+    async def message_deleted(self, conversation_id: int, message_id: int) -> None:
+        """message.deleted to every member whose visible range holds the message: active members
+        and also removed ones still reading old history. Visibility (blocks) is enforced by the
+        REST view; a client that never had the message just ignores the id."""
+        async with self._sessions() as session:
+            rows = await session.execute(
+                select(ConversationMember.user_id).where(
+                    ConversationMember.conversation_id == conversation_id,
+                    ConversationMember.history_start_id < message_id,
+                    (ConversationMember.history_end_id.is_(None)) | (ConversationMember.history_end_id >= message_id),
+                )
+            )
+            recipients = list(rows.scalars())
+        event = MessageDeleted(conversation_id=conversation_id, message_id=message_id)
+        await self.manager.send_many(recipients, envelope("message.deleted", event))
 
     # --- reactions ---------------------------------------------------------------------------
 
