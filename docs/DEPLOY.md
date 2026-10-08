@@ -7,7 +7,8 @@ You need the two public URLs at the end: `https://<backend>.up.railway.app` and 
 
 1. **New Project → Deploy from GitHub repo** → pick this repo.
 2. Service **Settings → Source → Root Directory**: `backend`.
-   Railway then finds `backend/railway.json` (Dockerfile build, health check `/api/v1/health` with a 60 s timeout, 1 replica).
+   Then **Settings → Config-as-code → Railway Config File**: `/backend/railway.json`. The config file path does not
+   follow the Root Directory, so without this the file (health check `/api/v1/health`, 60 s timeout, 1 replica) is ignored.
 3. **Add a volume**: service → right-click / **Attach Volume** → mount path **`/data`**.
    The database and uploads live there, so they survive redeploys.
 4. **Variables** (service → Variables). Railway sets `PORT` itself; don't add it.
@@ -19,7 +20,8 @@ You need the two public URLs at the end: `https://<backend>.up.railway.app` and 
    | `CORS_ORIGINS` | `http://localhost:3000` for now, then your Vercel URL in step 3 |
    | `DEMO_BOTS_ENABLED` | `true` |
 
-5. **Settings → Networking → Generate Domain**. Copy the URL (`https://<backend>.up.railway.app`).
+5. **Settings → Networking → Generate Domain**. If it asks for a port, enter **8080**, the `PORT` Railway gives the
+   app (the deploy log shows `Uvicorn running on http://0.0.0.0:8080`). Copy the URL (`https://<backend>.up.railway.app`).
 6. Check: open `https://<backend>.up.railway.app/api/v1/health`. It should show `{"status":"ok"}`.
    The first deploy log should show `Seed complete: users=11, ...`.
 

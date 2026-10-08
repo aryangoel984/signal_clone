@@ -210,6 +210,49 @@ def test_retry_does_not_broadcast_again(live: TestClient) -> None:
         assert len(of_type(drain(priya_ws), "message.new")) == 1
 
 
+# --- replies and reactions -------------------------------------------------------------------
+
+
+def test_reply_quote_is_pushed_worded_for_the_receiver(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+    original = send(live, alex, dm, "Original", "ws-reply-0001")
+
+    with live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(priya_ws)
+        response = live.post(
+            f"/api/v1/conversations/{dm}/messages",
+            headers=auth(priya),
+            json={"client_id": "ws-reply-0002", "body": "Answer", "reply_to_id": original["id"]},
+        )
+        assert response.status_code == 201, response.text
+        pushed = of_type(drain(priya_ws), "message.new")
+
+    assert pushed[0]["message"]["quote"] == {"id": original["id"], "sender_id": me(live, alex), "author_name": "Alex Rivera", "text": "Original"}
+
+
+def test_reaction_updates_are_pushed_to_members(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+    message = send(live, alex, dm, "React to me", "ws-react-0001")
+    priya_id = me(live, priya)
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws, live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(alex_ws)
+        drain(priya_ws)
+        live.put(f"/api/v1/messages/{message['id']}/reaction", headers=auth(priya), json={"emoji": "😂"})
+        live.delete(f"/api/v1/messages/{message['id']}/reaction", headers=auth(priya))
+
+        to_alex = of_type(drain(alex_ws), "reaction.updated")
+        to_priya = of_type(drain(priya_ws), "reaction.updated")  # her other tabs
+
+    expected = [
+        {"conversation_id": dm, "message_id": message["id"], "user_id": priya_id, "emoji": "😂"},
+        {"conversation_id": dm, "message_id": message["id"], "user_id": priya_id, "emoji": None},
+    ]
+    assert to_alex == expected and to_priya == expected
+
+
 # --- typing ------------------------------------------------------------------------------------
 
 

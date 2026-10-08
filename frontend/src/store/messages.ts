@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useConversations } from "@/store/conversations";
 import type { MessageStatus } from "@/types/conversation";
-import type { ChatMessage, Message, MessagePage } from "@/types/message";
+import type { ChatMessage, Message, MessagePage, Quote, ReactionEmoji } from "@/types/message";
 
 type Thread = {
   items: ChatMessage[]; // oldest first; my unconfirmed messages are at the end
@@ -16,13 +16,22 @@ type MessagesState = {
   threads: Record<number, Thread>;
   loadLatest: (conversationId: number) => Promise<void>;
   loadOlder: (conversationId: number) => Promise<void>;
-  send: (conversationId: number, text: string, me: { id: number; avatar_color: string }) => Promise<void>;
+  send: (
+    conversationId: number,
+    text: string,
+    me: { id: number; avatar_color: string },
+    replyTo: ChatMessage | null,
+  ) => Promise<void>;
   retry: (conversationId: number, clientId: string) => Promise<void>;
   markRead: (conversationId: number, upToMessageId: number) => Promise<void>;
   /** A message pushed over the WebSocket (from anyone, including my other tabs). */
   receive: (message: Message) => void;
   /** Tick updates for my messages; statuses only ever move forward. */
   applyStatuses: (conversationId: number, updates: { message_id: number; status: MessageStatus }[]) => void;
+  /** Sets (emoji) or removes (null) my reaction: shown at once, undone if the server refuses. */
+  react: (conversationId: number, messageId: number, myId: number, emoji: ReactionEmoji | null) => Promise<void>;
+  /** One user's reaction changed (reaction.updated, or my own optimistic change). */
+  applyReaction: (conversationId: number, messageId: number, userId: number, emoji: string | null) => void;
   /** After a reconnect: fetch everything newer than what's loaded. */
   catchUp: (conversationId: number) => Promise<void>;
 };
@@ -34,6 +43,12 @@ const PAGE_SIZE = 50;
 
 function newClientId(): string {
   return crypto.randomUUID();
+}
+
+/** The quote my optimistic reply shows until the server's copy replaces it. */
+export function quoteOf(original: ChatMessage, myId: number): Quote {
+  const authorName = original.sender_id === myId ? "You" : (original.sender_name ?? "");
+  return { id: original.id, sender_id: original.sender_id, author_name: authorName, text: original.text };
 }
 
 /** The server's copy of a message, without letting it lower a status we already know is
@@ -55,11 +70,11 @@ export const useMessages = create<MessagesState>()((set, get) => {
       items: current.items.map((message) => (message.client_id === clientId ? change(message) : message)),
     }));
 
-  async function post(conversationId: number, clientId: string, text: string) {
+  async function post(conversationId: number, clientId: string, text: string, replyToId: number | null) {
     try {
       const saved = await apiRequest<Message>(`/conversations/${conversationId}/messages`, {
         method: "POST",
-        body: { client_id: clientId, body: text },
+        body: { client_id: clientId, body: text, reply_to_id: replyToId },
       });
       replaceByClientId(conversationId, clientId, (existing) => mergeConfirmed(existing, saved));
       void useConversations.getState().loadChats(); // move the chat to the top with the new preview
@@ -101,7 +116,7 @@ export const useMessages = create<MessagesState>()((set, get) => {
     },
 
     /** Optimistic: the bubble appears at once with a clock, then becomes the server's copy. */
-    send: async (conversationId, text, me) => {
+    send: async (conversationId, text, me, replyTo) => {
       const clientId = newClientId();
       const optimistic: ChatMessage = {
         id: -Date.now(),
@@ -115,10 +130,13 @@ export const useMessages = create<MessagesState>()((set, get) => {
         sender_avatar_url: null,
         created_at: new Date().toISOString(),
         status: null,
+        reply_to_id: replyTo?.id ?? null,
+        quote: replyTo ? quoteOf(replyTo, me.id) : null,
+        reactions: [],
         localStatus: "sending",
       };
       update(conversationId, (current) => ({ items: [...current.items, optimistic] }));
-      await post(conversationId, clientId, text);
+      await post(conversationId, clientId, text, optimistic.reply_to_id);
     },
 
     /** Resends with the same client_id, so the server can't create a duplicate. */
@@ -126,7 +144,7 @@ export const useMessages = create<MessagesState>()((set, get) => {
       const message = thread(conversationId).items.find((item) => item.client_id === clientId);
       if (!message) return;
       replaceByClientId(conversationId, clientId, (item) => ({ ...item, localStatus: "sending" }));
-      await post(conversationId, clientId, message.text);
+      await post(conversationId, clientId, message.text, message.reply_to_id);
     },
 
     markRead: async (conversationId, upToMessageId) => {
@@ -160,6 +178,32 @@ export const useMessages = create<MessagesState>()((set, get) => {
           const next = statuses.get(item.id);
           const forward = next && (!item.status || STATUS_RANK[next] > STATUS_RANK[item.status]);
           return forward ? { ...item, status: next } : item;
+        }),
+      }));
+    },
+
+    react: async (conversationId, messageId, myId, emoji) => {
+      const message = thread(conversationId).items.find((item) => item.id === messageId);
+      const previous = message?.reactions.find((reaction) => reaction.user_id === myId)?.emoji ?? null;
+      get().applyReaction(conversationId, messageId, myId, emoji);
+      try {
+        await apiRequest<void>(`/messages/${messageId}/reaction`, emoji === null ? { method: "DELETE" } : { method: "PUT", body: { emoji } });
+      } catch (error) {
+        get().applyReaction(conversationId, messageId, myId, previous);
+        throw error;
+      }
+    },
+
+    applyReaction: (conversationId, messageId, userId, emoji) => {
+      update(conversationId, (current) => ({
+        items: current.items.map((item) => {
+          if (item.id !== messageId) return item;
+          const others = item.reactions.filter((reaction) => reaction.user_id !== userId);
+          const mine = item.reactions.find((reaction) => reaction.user_id === userId);
+          if (emoji === null) return { ...item, reactions: others };
+          // A changed reaction keeps its place (the server updates the row, created_at stays).
+          if (mine) return { ...item, reactions: item.reactions.map((r) => (r.user_id === userId ? { ...r, emoji } : r)) };
+          return { ...item, reactions: [...others, { user_id: userId, emoji }] };
         }),
       }));
     },

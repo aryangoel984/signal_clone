@@ -23,6 +23,10 @@
   --color-bubble-outgoing: var(--bubble-outgoing);
   --color-on-bubble-incoming: var(--on-bubble-incoming);
   --color-on-bubble-outgoing: var(--on-bubble-outgoing);
+  --color-quote-incoming: var(--quote-incoming);
+  --color-quote-outgoing: var(--quote-outgoing);
+  --color-reaction-pill: var(--reaction-pill);
+  --color-reaction-pill-mine: var(--reaction-pill-mine);
 
   --color-border: var(--border);
   --color-border-card: var(--border-card);

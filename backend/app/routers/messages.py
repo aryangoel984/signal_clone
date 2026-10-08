@@ -3,8 +3,8 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.core.deps import CurrentUser, DbSession, RealtimeDep
-from app.schemas.message import MessageDetails, MessageOut, MessagePage, ReadRequest, SendMessageRequest
-from app.services import message_service, receipt_service
+from app.schemas.message import MessageDetails, MessageOut, MessagePage, ReactRequest, ReadRequest, SendMessageRequest
+from app.services import message_service, reaction_service, receipt_service
 from app.services.conversation_service import ConversationNotFoundError, load_membership
 
 router = APIRouter(prefix="/conversations", tags=["messages"])
@@ -37,7 +37,9 @@ async def send_message(
     response: Response,
 ) -> MessageOut:
     try:
-        message, created = await message_service.send_message(db, realtime, user, conversation_id, body.client_id, body.body)
+        message, created = await message_service.send_message(
+            db, realtime, user, conversation_id, body.client_id, body.body, body.reply_to_id
+        )
     except ConversationNotFoundError:
         raise _NOT_FOUND from None
     except message_service.NotActiveMemberError:
@@ -46,6 +48,8 @@ async def send_message(
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Unblock this person to send messages") from None
     except message_service.ClientIdConflictError:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="client_id was already used in another conversation") from None
+    except message_service.InvalidReplyError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Can't reply to that message") from None
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return message
 
@@ -62,14 +66,37 @@ async def mark_read(
     await realtime.statuses_changed(changed)  # after the commit inside mark_read
 
 
-details_router = APIRouter(prefix="/messages", tags=["messages"])
+message_router = APIRouter(prefix="/messages", tags=["messages"])
+
+_MESSAGE_NOT_FOUND = HTTPException(status.HTTP_404_NOT_FOUND, detail="Message not found")
 
 
-@details_router.get("/{message_id}/receipts")
+@message_router.get("/{message_id}/receipts")
 async def message_details(message_id: int, user: CurrentUser, db: DbSession) -> MessageDetails:
     try:
         return await message_service.get_details(db, user, message_id)
     except message_service.MessageNotFoundError:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Message not found") from None
+        raise _MESSAGE_NOT_FOUND from None
     except message_service.NotSenderError:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only the sender can see message details") from None
+
+
+@message_router.put("/{message_id}/reaction", status_code=status.HTTP_204_NO_CONTENT)
+async def react(message_id: int, body: ReactRequest, user: CurrentUser, db: DbSession, realtime: RealtimeDep) -> None:
+    await _set_reaction(db, realtime, user, message_id, body.emoji)
+
+
+@message_router.delete("/{message_id}/reaction", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_reaction(message_id: int, user: CurrentUser, db: DbSession, realtime: RealtimeDep) -> None:
+    await _set_reaction(db, realtime, user, message_id, None)
+
+
+async def _set_reaction(db: DbSession, realtime: RealtimeDep, user: CurrentUser, message_id: int, emoji: str | None) -> None:
+    try:
+        await reaction_service.set_reaction(db, realtime, user, message_id, emoji)
+    except message_service.MessageNotFoundError:
+        raise _MESSAGE_NOT_FOUND from None
+    except message_service.NotActiveMemberError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="You're no longer a member of this group") from None
+    except message_service.RecipientBlockedError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Unblock this person to react") from None

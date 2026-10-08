@@ -41,6 +41,13 @@ class GroupUpdated(BaseModel):
     target_ids: list[int]
 
 
+class ReactionUpdated(BaseModel):
+    conversation_id: int
+    message_id: int
+    user_id: int
+    emoji: str | None  # null: the reaction was removed
+
+
 class PresenceUpdate(BaseModel):
     user_id: int
     online: bool

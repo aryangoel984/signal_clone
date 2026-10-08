@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
@@ -9,6 +9,22 @@ MAX_MESSAGE_LENGTH = 4000
 
 MessageBody = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_MESSAGE_LENGTH)]
 ClientId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_\-:]{8,64}$")]
+# Signal's default reaction set. The picker offers only these, so the API accepts only these.
+ReactionEmoji = Literal["❤️", "👍", "👎", "😂", "😮", "😢"]
+
+
+class Quote(BaseModel):
+    """The message a reply quotes, as the viewer sees it."""
+
+    id: int
+    sender_id: int | None
+    author_name: str  # "You" for my own messages
+    text: str
+
+
+class ReactionOut(BaseModel):
+    user_id: int
+    emoji: str
 
 
 class MessageOut(BaseModel):
@@ -23,6 +39,9 @@ class MessageOut(BaseModel):
     sender_avatar_url: str | None
     created_at: datetime
     status: MessageStatus | None  # only for my own text messages
+    reply_to_id: int | None
+    quote: Quote | None  # null on a reply whose original the viewer can't see ("Original message not found")
+    reactions: list[ReactionOut]  # oldest first; one per user; minus users the viewer blocked
 
 
 class MessagePage(BaseModel):
@@ -35,6 +54,13 @@ class SendMessageRequest(BaseModel):
 
     client_id: ClientId
     body: MessageBody
+    reply_to_id: int | None = None
+
+
+class ReactRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    emoji: ReactionEmoji
 
 
 class ReadRequest(BaseModel):

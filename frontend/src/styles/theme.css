@@ -30,6 +30,12 @@
   --on-bubble-incoming: var(--text-primary);
   --on-bubble-outgoing: var(--on-primary);
 
+  /* replies and reactions (no reply/reaction in docs/reference, so not sampled) */
+  --quote-incoming: #f9f9f9; /* quoted message panel inside an incoming bubble */
+  --quote-outgoing: rgb(255 255 255 / 0.22); /* ... inside an outgoing (blue) bubble */
+  --reaction-pill: #ffffff;
+  --reaction-pill-mine: #d8e3fb; /* the pill that includes my reaction */
+
   /* lines */
   --border: #e6e6e6; /* pane dividers */
   --border-card: #d9d9d9;
@@ -126,6 +132,10 @@
 
     --bubble-incoming: #323232;
 
+    --quote-incoming: #262626;
+    --reaction-pill: #2c2c2c;
+    --reaction-pill-mine: #2b3a5e;
+
     --border: #2c2c2c;
     --border-card: #343434;
     --header-shadow: #161616;
@@ -173,6 +183,10 @@
   --bg-button-secondary: #313131;
 
   --bubble-incoming: #323232;
+
+  --quote-incoming: #262626;
+  --reaction-pill: #2c2c2c;
+  --reaction-pill-mine: #2b3a5e;
 
   --border: #2c2c2c;
   --border-card: #343434;

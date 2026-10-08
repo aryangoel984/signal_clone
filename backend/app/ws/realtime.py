@@ -17,7 +17,16 @@ from app.core.time import utc_now
 from app.models import Block, Contact, ConversationMember, Message, User, UserSettings
 from app.services import receipt_service
 from app.services.message_queries import statuses_for
-from app.ws.events import GroupUpdated, MessageNew, MessageStatusChanged, PresenceUpdate, StatusUpdate, Typing, envelope
+from app.ws.events import (
+    GroupUpdated,
+    MessageNew,
+    MessageStatusChanged,
+    PresenceUpdate,
+    ReactionUpdated,
+    StatusUpdate,
+    Typing,
+    envelope,
+)
 from app.ws.manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
@@ -151,6 +160,26 @@ class Realtime:
                         sender_id,
                         envelope("message.status", MessageStatusChanged(conversation_id=conversation_id, updates=updates)),
                     )
+
+    # --- reactions ---------------------------------------------------------------------------
+
+    async def reaction_updated(self, conversation_id: int, message_id: int, user_id: int, emoji: str | None) -> None:
+        """reaction.updated to the active members (including the reactor's other tabs), except
+        people who blocked the reactor: they never see that person's reactions (PLAN 7.2)."""
+        async with self._sessions() as session:
+            blocked_reactor = select(Block.blocker_id).where(Block.blocked_id == user_id)
+            audience = (
+                await session.execute(
+                    select(ConversationMember.user_id).where(
+                        ConversationMember.conversation_id == conversation_id,
+                        ConversationMember.left_at.is_(None),
+                        ConversationMember.user_id.not_in(blocked_reactor),
+                    )
+                )
+            ).scalars()
+            recipients = list(audience)
+        event = ReactionUpdated(conversation_id=conversation_id, message_id=message_id, user_id=user_id, emoji=emoji)
+        await self.manager.send_many(recipients, envelope("reaction.updated", event))
 
     # --- groups ------------------------------------------------------------------------------
 

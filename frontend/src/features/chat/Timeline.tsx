@@ -3,9 +3,12 @@
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { ApiError } from "@/lib/api";
 import { useMessages } from "@/store/messages";
+import { showToast } from "@/store/toasts";
 import { useTypingIn } from "@/store/typing";
 import type { ConversationDetail } from "@/types/conversation";
+import type { ChatMessage, ReactionEmoji } from "@/types/message";
 
 import { buildRows, unreadMarker } from "./build-rows";
 import { ConversationHero } from "./ConversationHero";
@@ -18,18 +21,24 @@ type TimelineProps = {
   conversation: ConversationDetail;
   myId: number;
   lastReadAtOpen: number; // frozen when the chat opened, so the divider doesn't jump while reading
+  onReply: (message: ChatMessage) => void;
 };
 
 const LOAD_OLDER_THRESHOLD_PX = 200;
 const JUMP_BUTTON_THRESHOLD_PX = 300;
 const READ_DEBOUNCE_MS = 300;
+const JUMP_MAX_STEPS = 40; // older pages / frames to wait while looking for a quoted message
+const HIGHLIGHT_MS = 1500;
 
-export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) {
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+export function Timeline({ conversation, myId, lastReadAtOpen, onReply }: TimelineProps) {
   const conversationId = conversation.id;
   const thread = useMessages((state) => state.threads[conversationId]);
   const loadOlder = useMessages((state) => state.loadOlder);
   const retry = useMessages((state) => state.retry);
   const markRead = useMessages((state) => state.markRead);
+  const react = useMessages((state) => state.react);
 
   const scroller = useRef<HTMLDivElement>(null);
   const restoreFromBottom = useRef<number | null>(null); // scroll offset to keep while older messages load
@@ -37,6 +46,8 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
   const lastCount = useRef(0);
   const [showJump, setShowJump] = useState(false);
   const [detailsFor, setDetailsFor] = useState<number | null>(null);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const items = useMemo(() => thread?.items ?? [], [thread]);
   const [marker] = useState(() => unreadMarker(items, myId, lastReadAtOpen)); // messages are loaded before mount
@@ -76,6 +87,38 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
       restoreFromBottom.current = element.scrollHeight - element.scrollTop;
       void loadOlder(conversationId);
     }
+  }
+
+  /** Scrolls to a quoted message, loading older pages until it's in the DOM, then flashes it. */
+  async function jumpTo(messageId: number) {
+    const element = () => scroller.current?.querySelector<HTMLElement>(`[data-bubble-id="${messageId}"]`);
+    for (let step = 0; !element() && step < JUMP_MAX_STEPS; step++) {
+      const current = useMessages.getState().threads[conversationId];
+      if (!current || (current.nextCursor === null && !current.loadingOlder)) break; // nothing older left
+      if (!current.loadingOlder && scroller.current) {
+        restoreFromBottom.current = scroller.current.scrollHeight - scroller.current.scrollTop;
+        await loadOlder(conversationId);
+      }
+      await nextFrame(); // let React render the new page
+    }
+    const target = element();
+    if (!target) {
+      showToast("Original message not found");
+      return;
+    }
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    setHighlightId(messageId);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlightId(null), HIGHLIGHT_MS);
+  }
+  useEffect(() => () => {
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+  }, []);
+
+  function handleReact(messageId: number, emoji: ReactionEmoji | null) {
+    react(conversationId, messageId, myId, emoji).catch((error: unknown) =>
+      showToast(error instanceof ApiError ? error.detail : "Couldn't react"),
+    );
   }
 
   // Read receipts: report the newest incoming message that has been on screen.
@@ -132,12 +175,17 @@ export function Timeline({ conversation, myId, lastReadAtOpen }: TimelineProps) 
                 <MessageBubble
                   key={row.key}
                   message={row.message}
+                  myId={myId}
                   mine={row.mine}
                   first={row.first}
                   last={row.last}
                   isGroup={conversation.type === "group"}
                   onRetry={(clientId) => void retry(conversationId, clientId)}
                   onShowDetails={setDetailsFor}
+                  highlighted={highlightId === row.message.id}
+                  onReply={onReply}
+                  onReact={handleReact}
+                  onJumpTo={(id) => void jumpTo(id)}
                 />
               );
           }

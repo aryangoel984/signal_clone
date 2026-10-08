@@ -56,7 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(contacts.router, prefix=API_PREFIX)
     app.include_router(conversations.router, prefix=API_PREFIX)
     app.include_router(messages.router, prefix=API_PREFIX)
-    app.include_router(messages.details_router, prefix=API_PREFIX)
+    app.include_router(messages.message_router, prefix=API_PREFIX)
     app.include_router(groups.router, prefix=API_PREFIX)
     app.include_router(blocks.router, prefix=API_PREFIX)
     app.include_router(ws.router)

@@ -14,6 +14,10 @@ export type ServerEvent =
       type: "group.updated";
       payload: { conversation_id: number; change: string; actor_id: number; target_ids: number[] };
     }
+  | {
+      type: "reaction.updated";
+      payload: { conversation_id: number; message_id: number; user_id: number; emoji: string | null };
+    }
   | { type: "error"; payload: { detail: string } }
   | { type: "pong"; payload: Record<string, never> };
 

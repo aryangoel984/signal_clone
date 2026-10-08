@@ -8,6 +8,7 @@ import { useAuthStore } from "@/store/auth";
 import { useMessages } from "@/store/messages";
 import { useRevisions } from "@/store/revisions";
 import type { ConversationDetail } from "@/types/conversation";
+import type { ChatMessage } from "@/types/message";
 
 import { BlockedBanner } from "./BlockedBanner";
 import { ChatHeader } from "./ChatHeader";
@@ -27,6 +28,7 @@ export function ChatView({ conversationId }: { conversationId: number }) {
   const revision = useRevisions((state) => state.byConversation[conversationId] ?? 0);
   const [state, setState] = useState<LoadState | null>(null);
   const [view, setView] = useState<"chat" | "settings">("chat");
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,17 +74,23 @@ export function ChatView({ conversationId }: { conversationId: number }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col bg-chat">
       <ChatHeader conversation={conversation} onChanged={update} onOpenSettings={() => setView("settings")} />
-      <Timeline conversation={conversation} myId={me.id} lastReadAtOpen={state.lastReadAtOpen} />
+      <Timeline conversation={conversation} myId={me.id} lastReadAtOpen={state.lastReadAtOpen} onReply={setReplyTo} />
       {conversation.blocked_by_me ? (
         <BlockedBanner name={conversation.title} userId={conversation.other_user_id} onChanged={update} conversationId={conversationId} />
       ) : (
-      <Composer
-        conversationId={conversationId}
-        onSend={(text) => void send(conversationId, text, me)}
-        disabledReason={
-          conversation.can_send ? undefined : "You can't send messages to this group because you're no longer a member."
-        }
-      />
+        <Composer
+          conversationId={conversationId}
+          myId={me.id}
+          onSend={(text) => {
+            void send(conversationId, text, me, replyTo);
+            setReplyTo(null);
+          }}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
+          disabledReason={
+            conversation.can_send ? undefined : "You can't send messages to this group because you're no longer a member."
+          }
+        />
       )}
     </div>
   );

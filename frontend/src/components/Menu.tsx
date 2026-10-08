@@ -3,6 +3,8 @@
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 
+import { useDismiss } from "@/hooks/useDismiss";
+
 export type MenuItem = {
   label: string;
   icon?: LucideIcon;
@@ -20,17 +22,15 @@ type MenuProps = {
 
 const MENU_WIDTH = 240;
 
-/** Dropdown / context menu at a fixed screen position. Closes on outside click, Escape, scroll or resize. */
+/** Dropdown / context menu at a fixed screen position. Closes on outside click, Escape, Tab, scroll or resize. */
 export function Menu({ items, position, onClose }: MenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
+  useDismiss(ref, onClose);
   useEffect(() => {
     ref.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    const onPointerDown = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) onClose();
-    };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" || event.key === "Tab") {
+      if (event.key === "Tab") {
         event.preventDefault();
         onClose();
         return;
@@ -49,16 +49,8 @@ export function Menu({ items, position, onClose }: MenuProps) {
         items[next].focus();
       }
     };
-    window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("resize", onClose);
-    window.addEventListener("scroll", onClose, true);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("resize", onClose);
-      window.removeEventListener("scroll", onClose, true);
-    };
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
   const left = Math.max(8, Math.min(position.left, window.innerWidth - MENU_WIDTH - 8));
