@@ -2,6 +2,11 @@
 @import "../styles/theme.css";
 
 /* Expose theme tokens as Tailwind utilities (bg-chat, text-secondary, ...). */
+/* Two panes from 900px; one pane (list OR chat) below. Gives the `pane:` variant. */
+@theme {
+  --breakpoint-pane: 56.25rem;
+}
+
 @theme inline {
   --color-primary: var(--primary);
   --color-on-primary: var(--on-primary);

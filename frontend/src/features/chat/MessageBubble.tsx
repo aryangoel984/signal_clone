@@ -26,6 +26,15 @@ const AVATAR_SIZE = 28;
 export function MessageBubble({ message, mine, first, last, isGroup, onRetry, onShowDetails }: MessageBubbleProps) {
   const [menu, setMenu] = useState<MenuPosition | null>(null);
   const confirmed = message.id > 0 && !message.localStatus;
+  const actions = (
+    <IconButton
+      icon={Ellipsis}
+      size={16}
+      label="Message actions"
+      className="self-center text-text-secondary opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+      onClick={(event) => setMenu(belowElement(event.currentTarget))}
+    />
+  );
   const showGroupDetails = isGroup && !mine;
   const status = message.localStatus === "sending" ? "sending" : message.status;
 
@@ -36,15 +45,7 @@ export function MessageBubble({ message, mine, first, last, isGroup, onRetry, on
 
   return (
     <div className={`group flex items-end gap-2 ${mine ? "justify-end" : "justify-start"} ${first ? "mt-3" : "mt-0.5"}`}>
-      {mine && confirmed && (
-        <IconButton
-          icon={Ellipsis}
-          size={16}
-          label="Message actions"
-          className="self-center text-text-secondary opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-          onClick={(event) => setMenu(belowElement(event.currentTarget))}
-        />
-      )}
+      {mine && confirmed && actions}
       {showGroupDetails &&
         (last ? (
           <Avatar name={message.sender_name} color={message.sender_avatar_color ?? "A210"} imageUrl={message.sender_avatar_url} size={AVATAR_SIZE} />
@@ -53,6 +54,11 @@ export function MessageBubble({ message, mine, first, last, isGroup, onRetry, on
         ))}
       <div className={`flex max-w-[min(70%,560px)] flex-col ${mine ? "items-end" : "items-start"}`}>
         <div
+          onContextMenu={(event) => {
+            if (!confirmed) return;
+            event.preventDefault();
+            setMenu({ top: event.clientY, left: event.clientX });
+          }}
           data-message-id={!mine && message.id > 0 ? message.id : undefined}
           className={`rounded-[18px] px-3 py-[7px] text-sm leading-5 ${corners} ${
             mine ? "bg-bubble-outgoing text-on-bubble-outgoing" : "bg-bubble-incoming text-on-bubble-incoming"
@@ -83,16 +89,21 @@ export function MessageBubble({ message, mine, first, last, isGroup, onRetry, on
           </button>
         )}
       </div>
+      {!mine && confirmed && actions}
       {menu && (
         <Menu
           position={menu}
           onClose={() => setMenu(null)}
           items={[
-            { label: "Message details", icon: Info, onSelect: () => onShowDetails(message.id) },
+            ...(mine ? [{ label: "Message details", icon: Info, onSelect: () => onShowDetails(message.id) }] : []),
             {
               label: "Copy text",
               icon: Copy,
-              onSelect: () => void navigator.clipboard.writeText(message.text).then(() => showToast("Copied")),
+              onSelect: () =>
+                void navigator.clipboard
+                  .writeText(message.text)
+                  .then(() => showToast("Copied"))
+                  .catch(() => showToast("Couldn't copy")),
             },
           ]}
         />

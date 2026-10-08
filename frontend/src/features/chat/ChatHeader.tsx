@@ -1,6 +1,7 @@
 "use client";
 
-import { Archive, ArchiveRestore, Ban, Ellipsis, Phone, Pin, PinOff, Search, Settings, UserRoundPlus, Video } from "lucide-react";
+import { Archive, ArchiveRestore, Ban, Bell, BellOff, ChevronLeft, Ellipsis, Phone, Pin, PinOff, Search, Settings, UserRoundPlus, Video } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
@@ -14,6 +15,9 @@ import { usePresence } from "@/store/presence";
 import { COMING_SOON, showToast } from "@/store/toasts";
 import type { ConversationDetail } from "@/types/conversation";
 
+// "Always" is stored as a far-future time, so the same muted_until check covers every option.
+const MUTE_ALWAYS = "9999-12-31T00:00:00Z";
+
 type ChatHeaderProps = {
   conversation: ConversationDetail;
   onChanged: (conversation: ConversationDetail) => void;
@@ -25,6 +29,8 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
   const loadChats = useConversations((state) => state.loadChats);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
   const [confirmBlock, setConfirmBlock] = useState(false);
+  const [muteMenu, setMuteMenu] = useState<MenuPosition | null>(null);
+  const muted = conversation.muted_until !== null && new Date(conversation.muted_until) > new Date();
   const isGroup = conversation.type === "group";
   const presence = usePresence(conversation.other_user_id, {
     online: conversation.other_user_online ?? false,
@@ -55,7 +61,19 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
       return apiRequest<ConversationDetail>(`/conversations/${conversation.id}`);
     }, block ? "Blocked" : "Unblocked");
 
+  const mute = (until: string | null, done: string) =>
+    void run(() => setPreferences(conversation.id, { muted_until: until }), done);
+  const muteOptions: MenuItem[] = [
+    { label: "Mute for 1 hour", onSelect: () => mute(new Date(Date.now() + 3600e3).toISOString(), "Muted for 1 hour") },
+    { label: "Mute for 8 hours", onSelect: () => mute(new Date(Date.now() + 8 * 3600e3).toISOString(), "Muted for 8 hours") },
+    { label: "Mute for 1 week", onSelect: () => mute(new Date(Date.now() + 7 * 24 * 3600e3).toISOString(), "Muted for 1 week") },
+    { label: "Mute always", onSelect: () => mute(MUTE_ALWAYS, "Muted") },
+  ];
+
   const items: MenuItem[] = [
+    muted
+      ? { label: "Unmute", icon: Bell, onSelect: () => mute(null, "Unmuted") }
+      : { label: "Mute notifications…", icon: BellOff, onSelect: () => menuPosition && setMuteMenu(menuPosition) },
     ...(isGroup ? [{ label: "Group settings", icon: Settings, onSelect: onOpenSettings }] : []),
     ...(!isGroup && conversation.is_contact === false
       ? [{ label: "Add to contacts", icon: UserRoundPlus, onSelect: () => void addToContacts() }]
@@ -80,7 +98,10 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
   ];
 
   return (
-    <header className="relative z-10 flex h-[52px] shrink-0 items-center gap-3 bg-chat px-4 shadow-[0_2px_10px_var(--header-shadow)]">
+    <header className="relative z-10 flex h-[52px] shrink-0 items-center gap-3 bg-chat px-2 shadow-[0_2px_10px_var(--header-shadow)] pane:px-4">
+      <Link href="/chats" aria-label="Back to chats" className="rounded-control p-1.5 text-text-primary hover:bg-selected pane:hidden">
+        <ChevronLeft size={22} aria-hidden />
+      </Link>
       <Avatar name={conversation.title} color={conversation.avatar_color} imageUrl={conversation.avatar_url} size={32} isGroup={isGroup} />
       <div className="min-w-0 flex-1">
         {isGroup ? (
@@ -94,7 +115,8 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
         )}
         {subtitle && <p className="truncate text-xs text-text-secondary">{subtitle}</p>}
       </div>
-      <div className="flex items-center gap-2">
+      {muted && <BellOff size={15} className="shrink-0 text-text-secondary" aria-label="Muted" />}
+      <div className="flex items-center gap-0.5 pane:gap-2">
         <IconButton icon={Video} label="Video call" onClick={() => showToast(COMING_SOON)} />
         {!isGroup && <IconButton icon={Phone} label="Voice call" onClick={() => showToast(COMING_SOON)} />}
         <IconButton icon={Search} label="Search in chat" onClick={() => showToast(COMING_SOON)} />
@@ -112,6 +134,9 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
             void setBlocked(true);
           }}
         />
+      )}
+      {muteMenu && (
+        <Menu items={muteOptions} onClose={() => setMuteMenu(null)} position={{ top: muteMenu.top, left: muteMenu.left - 200 }} />
       )}
       {menuPosition && (
         <Menu

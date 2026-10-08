@@ -1,3 +1,5 @@
+import { ChevronLeft } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { Toggle } from "@/components/Toggle";
@@ -6,8 +8,13 @@ import { Toggle } from "@/components/Toggle";
 export function SettingsPage({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-chat">
-      <div className="mx-auto w-full max-w-[720px] px-6 pt-10 pb-12">
-        <h1 className="mb-8 text-center text-[15px] font-semibold text-text-primary">{title}</h1>
+      <div className="mx-auto w-full max-w-[720px] px-4 pt-4 pb-12 pane:px-6 pane:pt-10">
+        <div className="relative mb-8 flex items-center justify-center">
+          <Link href="/settings" aria-label="Back to settings" className="absolute left-0 rounded-control p-1.5 text-text-primary hover:bg-selected pane:hidden">
+            <ChevronLeft size={20} aria-hidden />
+          </Link>
+          <h1 className="text-[15px] font-semibold text-text-primary">{title}</h1>
+        </div>
         <div className="flex flex-col gap-6">{children}</div>
       </div>
     </div>

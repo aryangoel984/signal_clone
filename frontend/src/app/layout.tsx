@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 
 import { AuthBootstrap } from "@/features/auth/AuthBootstrap";
@@ -14,6 +14,13 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Signal",
   description: "A Signal Desktop clone",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover", // draw under the notch; padding uses env(safe-area-inset-*)
+  interactiveWidget: "resizes-content", // the on-screen keyboard shrinks the layout, so the composer stays visible
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

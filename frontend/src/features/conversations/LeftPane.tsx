@@ -23,7 +23,7 @@ export function LeftPane() {
   const mode = useLeftPane((state) => state.mode);
   const Panel = PANELS[mode];
   return (
-    <aside className="flex w-[var(--sidebar-width)] shrink-0 flex-col border-r border-border bg-sidebar">
+    <aside className="flex w-full shrink-0 flex-col border-border bg-sidebar pane:w-[var(--sidebar-width)] pane:border-r">
       <Panel />
     </aside>
   );

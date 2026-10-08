@@ -77,7 +77,11 @@ function AccountPage() {
     <SettingsPage title="Account">
       <SettingsSection note="Signal Desktop is a linked device; linking more devices isn't available here.">
         <SettingsRow label="Phone number" description={user?.phone_number} />
-        <SettingsRow label="Linked devices" description="Coming soon" />
+        <SettingsRow label="Linked devices" description="Link Signal on other computers and tablets.">
+          <Button variant="secondary" onClick={() => showToast("Coming soon")}>
+            Link new device
+          </Button>
+        </SettingsRow>
       </SettingsSection>
       <SettingsSection>
         <SettingsRow label="Log out" description="You can log back in with your phone number and the code 123456.">
@@ -189,16 +193,17 @@ function PrivacyPage() {
 
   return (
     <SettingsPage title="Privacy">
-      <SettingsSection title="Messaging">
+      <SettingsSection
+        title="Messaging"
+        note="See and share when messages are being read and typed. If disabled, you won't see read receipts or typing indicators from others."
+      >
         <ToggleRow
           label="Read receipts"
-          description="If read receipts are disabled, you won't be able to see read receipts from others."
           checked={settings?.read_receipts_enabled ?? true}
           onChange={(value) => update({ read_receipts_enabled: value })}
         />
         <ToggleRow
           label="Typing indicators"
-          description="If typing indicators are disabled, you won't be able to see typing indicators from others."
           checked={settings?.typing_indicators_enabled ?? true}
           onChange={(value) => update({ typing_indicators_enabled: value })}
         />

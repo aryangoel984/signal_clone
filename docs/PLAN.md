@@ -502,6 +502,13 @@ AppShell
 | 8 | **Bonus** (by value) | Reply/quote → reactions → attachments → disappearing messages (sweeper task) → keyboard shortcuts. | Each bonus feature works end to end. |
 | 9 | **Ship (final deploy)** | README (setup, architecture, ER/table list, API overview, assumptions, demo login, bot accounts). Final deploy to the same hosts as 2b: `app.db` and `uploads/` on the persistent volume. Boot runs the idempotent seed. If a clean demo dataset is wanted, run `--reset` once **by hand** before submitting (never on boot). Then a smoke test of every core feature on the public URLs. | The public link works with seeded data, logging in with phone + `123456`, and a single-browser demo with a bot works end to end. |
 
+## 5b. Phase 7 outcome (polish)
+- **Responsive:** two panes from **900px** (Tailwind `pane:` breakpoint), one pane below. `/chats` shows the list and `/chats/[id]` the chat, with a ‹ back button. Settings works the same way (`/settings` menu → `/settings/[section]` page with back). The nav rail becomes a **bottom bar** on top-level screens (hidden inside a chat or settings page). The layout uses `100dvh` and `viewport-fit=cover`. `interactive-widget=resizes-content` keeps the composer above the on-screen keyboard. The composer and bottom bar pad by `env(safe-area-inset-bottom)`. Checked at 390×844, 820×1180 and 1440×900: no horizontal scroll, and the composer stays inside the viewport.
+- **Mute:** chat ⋯ → Mute for 1 hour / 8 hours / 1 week / always (always = `muted_until` 9999-12-31), or Unmute. A muted icon shows in the list and header. Muted chats get no in-app toasts.
+- **Menus:** right-click on a message → Copy text, plus Message details for my own. Arrow keys / Home / End move between items; Escape and Tab close.
+- **Screenshot comparison:** 10 reference screens were captured at 1440×900 @2× and compared on main surfaces (rail, panes, header, search, composer, settings cards, toggles, bubbles). Everything matches within ±3 per channel. The bubble blue (#3361E6 in screenshots vs #2C6BED) is treated as expected (colour profile). Remaining differences are content only: Settings omits desktop-only options (Permissions, Updates, Delete data, Stories, Advanced), Privacy lists blocked users inline instead of on a sub-page, and Calls has no call history.
+- **Built from memory (no reference):** Appearance page, Blocked list, block confirm dialog, Linked devices row, mute menu, and the whole mobile layout.
+
 ## 6. Assumptions
 - One backend process (the in-memory WS manager). Horizontal scaling would need Redis pub/sub.
 - "Encryption" appears only as UI notices. There's no cryptography.

@@ -61,7 +61,7 @@ export function Composer({ conversationId, onSend, disabledReason }: ComposerPro
 
   const hasText = text.trim() !== "";
   return (
-    <div className="flex shrink-0 items-end gap-2 px-4 pt-1 pb-3">
+    <div className="flex shrink-0 items-end gap-2 px-3 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))] pane:px-4">
       <IconButton icon={Smile} label="Emoji" size={22} onClick={() => showToast(COMING_SOON)} className="mb-0.5" />
       <textarea
         ref={field}

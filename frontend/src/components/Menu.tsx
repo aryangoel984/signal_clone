@@ -30,7 +30,24 @@ export function Menu({ items, position, onClose }: MenuProps) {
       if (!ref.current?.contains(event.target as Node)) onClose();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" || event.key === "Tab") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      // Arrow keys / Home / End move between items (Enter and Space activate the focused button).
+      const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next =
+        event.key === "ArrowDown" ? (current + 1) % items.length
+        : event.key === "ArrowUp" ? (current - 1 + items.length) % items.length
+        : event.key === "Home" ? 0
+        : event.key === "End" ? items.length - 1
+        : null;
+      if (next !== null && items[next]) {
+        event.preventDefault();
+        items[next].focus();
+      }
     };
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
