@@ -14,6 +14,7 @@
 | Message status | Not stored on `messages`. Derived from `message_receipts` | One source of truth. Groups need per-member status anyway. `sending` exists only on the client. |
 | Auth token storage | `Authorization: Bearer` + `localStorage` (not an httpOnly cookie). See "Auth token storage" in section 2. | Frontend and API are on different sites, so a cookie would be a third-party cookie: it needs `SameSite=None`, CSRF protection, and can be blocked by the browser. WebSockets can't send an `Authorization` header and need the token explicitly anyway. |
 | Writes vs push | REST for every persisted mutation. WS for server push and short-lived client events (typing) | REST gives validation, status codes and idempotency. WS stays a simple broadcast channel. |
+| Theme | `user_settings.theme` (system/light/dark) is the source of truth. The client caches it in `localStorage` (`signal.theme`) and an inline `<head>` script sets `data-theme` before the first paint, also on the login pages. After login the account value wins. `<html suppressHydrationWarning>`. | No flash of the wrong theme on reload. Works before login. |
 | Real-time scale | One process, in-memory connection manager (`uvicorn --workers 1`) | Enough for the demo. Stated as an assumption in the README. Redis pub/sub would be the next step. |
 | SQLite settings | A sync `"connect"` listener on `engine.sync_engine` (`core/db.py`) runs, in order: `busy_timeout=5000`, `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=NORMAL`, on **every** connection | `busy_timeout` comes first so the later pragmas wait for a lock instead of failing. `foreign_keys` is per-connection and off by default. WAL lets reads run while a write is in progress. The listener is sync because pool events fire on the sync engine; with aiosqlite it receives SQLAlchemy's sync-style adapter connection. |
 
@@ -279,7 +280,7 @@ Conventions: JSON throughout. Errors are `{ "detail": "..." }`. Every endpoint e
 | DELETE | `/users/me/avatar` | Back to the initials avatar (file deleted) |
 
 Media: `/media/*` serves `UPLOADS_DIR` through `MediaFiles` (`core/media.py`), a `StaticFiles` subclass that adds `X-Content-Type-Options: nosniff`, which `StaticFiles` doesn't send. Avatars are public to anyone with the (unguessable) URL. Attachments (phase 8) get an authenticated endpoint instead.
-| GET | `/users/me/settings` · PATCH `/users/me/settings` | Theme, privacy and notification toggles |
+| GET | `/users/me/settings` · PATCH `/users/me/settings` | `{theme, read_receipts_enabled, typing_indicators_enabled, notifications_enabled, enter_key_sends}`, PATCH semantics, unknown fields → 422. All wired end to end: receipts off = no `read_at`, no read events (7.4). **Typing indicators off = my typing isn't sent *and* I don't receive others'** (Signal). Enter-sends switches the composer (off: Ctrl/⌘+Enter sends). Notifications off = no in-app toasts. |
 | GET | `/users/search?q=` | Matches an **exact** phone number (separators stripped), a **username prefix** (`@` optional, LIKE wildcards escaped), or a **name among my contacts only** (strangers can't be found by name). Excludes me and users who haven't finished onboarding. Contacts first, max 20. |
 | GET | `/users/{id}` | Public profile (`UserPublic`): name as the viewer sees it (nickname > display name > phone), username, about, avatar, `is_contact`. **`phone_number` only if they're my contact.** Presence (`online`, `last_seen_at`) is added in phase 5. |
 
@@ -295,7 +296,7 @@ Media: `/media/*` serves `UPLOADS_DIR` through `MediaFiles` (`core/media.py`), a
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/blocks` | My blocked users (Privacy → Blocked) |
-| PUT | `/blocks/{user_id}` | Block anyone, contact or not. Idempotent, returns 204. 400 if blocking yourself. |
+| PUT | `/blocks/{user_id}` | Block anyone, contact or not. Idempotent, returns 204. 400 if blocking yourself, 404 if unknown. DM rows carry `blocked_by_me`, and the UI swaps the composer for an Unblock banner. |
 | DELETE | `/blocks/{user_id}` | Unblock, returns 204 |
 
 ### Conversations
@@ -516,9 +517,11 @@ AppShell
 Anyone can be blocked through `PUT /blocks/{user_id}`, from the chat header ⋯ menu or the conversation details panel, whether or not they're a contact. Effects, all enforced in services:
 - **Blocked user sends to me:** the send succeeds from their side (201, Signal doesn't reveal blocks). No receipt row is created for me, it isn't pushed to me, and it stays at ✓ `sent` for them forever.
 - **My views:** history, the last-message preview and unread counts exclude messages from users I've blocked with `created_at >= blocks.created_at` (`visible_to()`). Messages from before the block stay visible. **This applies to groups too, verified against Signal:** "If you share a group with someone you had blocked, you will not see messages or changes to the group name, picture, or settings from this contact. However, they may see your messages" ([Signal Support](https://support.signal.org/hc/articles/360007060072)). So the blocked person's later group messages (and their system lines) are hidden from me but visible to everyone else, and they get no receipt row for me. Tested in `test_groups.py`.
-- **Me sending to a blocked user in a DM:** 403 "Unblock to send". The composer is replaced by an Unblock banner. In groups I can still send, and they still receive.
+- **Me sending to a blocked user in a DM:** 403 "Unblock this person to send messages" (**only the blocker gets this**; tested both ways). The composer is replaced by an Unblock banner. In groups I can still send, and they still receive.
 - **Ephemeral events:** `typing.*` and `presence.update` from a blocked user are not relayed to the blocker, and the blocker's aren't relayed to them.
 - Unblocking deletes the row. Messages sent during the block stay hidden, because they were never delivered.
+
+- **Group name and photo:** if the latest rename / photo change came from someone the blocker blocked, the blocker keeps the previous name (reconstructed from the newest rename line they may see; `group_created` and `group_renamed` record the name) and sees the default group photo (old files are deleted on change). See `message_queries.group_appearance`. Tested.
 
 ### 7.3 Do empty DMs appear in the chat list?
 **No.** `POST /conversations/direct` creates the row with `last_message_at = NULL`, and the frontend navigates straight to it. The chat list filters out `last_message_at IS NULL`, so a DM shows up in both users' lists only once the first message is sent. That stops "I clicked a contact by accident" clutter, and the recipient doesn't see a conversation that has nothing in it. Groups always appear immediately, because the "created the group" system message sets `last_message_at`. System messages bump `last_message_at`. Unread counts still only count `kind='text'`.

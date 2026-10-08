@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.avatar_colors import avatar_color_for
-from app.models import Contact, Conversation, ConversationMember, Message, MessageReceipt, User, UserSettings
+from app.models import Block, Contact, Conversation, ConversationMember, Message, MessageReceipt, User, UserSettings
 from app.models.enums import ConversationType, MessageKind, MessageStatus
 from app.schemas.conversation import (
     ConversationDetail,
@@ -16,7 +16,7 @@ from app.schemas.conversation import (
     MemberOut,
     UpdatePreferencesRequest,
 )
-from app.services.message_queries import last_visible_message, statuses_for, unread_count
+from app.services.message_queries import group_appearance, last_visible_message, statuses_for, unread_count
 from app.services.names import describe_system_message, display_names, user_ids_in
 from app.ws.realtime import Realtime
 
@@ -41,6 +41,7 @@ class _Context:
     viewer: User
     read_receipts_on: bool
     contact_ids: set[int]
+    blocked_ids: set[int]
     realtime: Realtime
 
 
@@ -192,6 +193,7 @@ async def _load_context(session: AsyncSession, realtime: Realtime, viewer: User)
         viewer=viewer,
         read_receipts_on=settings.read_receipts_enabled if settings else True,
         contact_ids=contact_ids,
+        blocked_ids=set((await session.execute(select(Block.blocked_id).where(Block.blocker_id == viewer.id))).scalars()),
         realtime=realtime,
     )
 
@@ -233,8 +235,8 @@ async def _summarize(
         title = names.get(other.id, "Unknown") if other else "Deleted user"
         avatar_url, avatar_color = (other.avatar_url, other.avatar_color) if other else (None, conversation.avatar_color)
     else:
-        title = conversation.name or "Group"
-        avatar_url, avatar_color = conversation.avatar_url, conversation.avatar_color
+        title, avatar_url = await group_appearance(session, context.viewer_id, conversation)
+        avatar_color = conversation.avatar_color
 
     return ConversationSummary(
         id=conversation.id,
@@ -246,6 +248,7 @@ async def _summarize(
         other_user_online=context.realtime.is_online(other.id) if is_direct and other else None,
         other_user_last_seen_at=other.last_seen_at if is_direct and other else None,
         is_contact=(other.id in context.contact_ids) if is_direct and other else None,
+        blocked_by_me=(other.id in context.blocked_ids) if is_direct and other else None,
         member_count=len(members),
         is_pinned=member.is_pinned,
         is_archived=member.is_archived,

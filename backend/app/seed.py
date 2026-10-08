@@ -209,6 +209,8 @@ async def _insert_messages(
                     "event": item.event,
                     "actor_id": users[item.actor].id,
                     "target_ids": [users[target].id for target in item.targets],
+                    # group names are reconstructed from these when a viewer blocked a renamer
+                    **({"name": seeded.spec.name} if item.event == "group_created" and seeded.spec.name else {}),
                 },
                 created_at=created_at,
             )

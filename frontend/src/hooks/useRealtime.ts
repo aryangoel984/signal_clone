@@ -10,14 +10,32 @@ import { useConversations } from "@/store/conversations";
 import { useMessages } from "@/store/messages";
 import { usePresenceStore } from "@/store/presence";
 import { useRevisions } from "@/store/revisions";
+import { useSettings } from "@/store/settings";
+import { showToast } from "@/store/toasts";
 import { useTyping } from "@/store/typing";
+import type { Message } from "@/types/message";
 import type { ServerEvent } from "@/types/realtime";
+
+/** In-app notice for a message in a chat that isn't open; skipped for my own messages,
+ *  system lines, muted chats, or when notifications are off in Settings. */
+function notifyIfElsewhere(message: Message): void {
+  const myId = useAuthStore.getState().user?.id;
+  const notificationsOn = useSettings.getState().settings?.notifications_enabled ?? true;
+  if (message.kind !== "text" || message.sender_id === myId || !notificationsOn) return;
+  if (window.location.pathname === `/chats/${message.conversation_id}`) return;
+  const chat = useConversations.getState().chats?.find((c) => c.id === message.conversation_id);
+  if (chat?.muted_until && new Date(chat.muted_until) > new Date()) return;
+  const sender = message.sender_name ?? "New message";
+  const where = chat && chat.type === "group" ? `${sender} in ${chat.title}` : sender;
+  showToast(`${where}: ${message.text}`, `/chats/${message.conversation_id}`);
+}
 
 function handle(event: ServerEvent): void {
   switch (event.type) {
     case "message.new": {
       const { message } = event.payload;
       useMessages.getState().receive(message);
+      notifyIfElsewhere(message);
       if (message.sender_id !== null) useTyping.getState().stop(message.conversation_id, message.sender_id);
       useConversations.getState().refreshSoon();
       break;

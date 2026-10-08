@@ -4,8 +4,9 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 
 from app.core.deps import AppSettings, CurrentUser, DbSession
 from app.schemas.contact import UserPublic
+from app.schemas.settings import SettingsOut, UpdateSettingsRequest
 from app.schemas.user import MeResponse, UpdateMeRequest
-from app.services import contact_service, media, user_service
+from app.services import contact_service, media, settings_service, user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -40,6 +41,16 @@ async def upload_avatar(file: UploadFile, user: CurrentUser, db: DbSession, sett
 @router.delete("/me/avatar")
 async def delete_avatar(user: CurrentUser, db: DbSession, settings: AppSettings) -> MeResponse:
     return MeResponse.model_validate(await user_service.remove_avatar(db, user, settings.uploads_dir))
+
+
+@router.get("/me/settings")
+async def get_settings(user: CurrentUser, db: DbSession) -> SettingsOut:
+    return SettingsOut.model_validate(await settings_service.get_settings(db, user))
+
+
+@router.patch("/me/settings")
+async def update_settings(body: UpdateSettingsRequest, user: CurrentUser, db: DbSession) -> SettingsOut:
+    return SettingsOut.model_validate(await settings_service.update_settings(db, user, body))
 
 
 @router.get("/search")

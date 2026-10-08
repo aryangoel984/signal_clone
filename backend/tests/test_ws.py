@@ -306,3 +306,55 @@ def test_removed_member_gets_removal_but_nothing_after(live: TestClient) -> None
         {"conversation_id": trip, "change": "member_removed", "actor_id": me(live, alex), "target_ids": [marcus_id]}
     ]
     assert after == []
+
+
+# --- privacy settings and blocks ------------------------------------------------------------------------
+
+
+def test_typing_indicators_off_neither_sends_nor_receives(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+    live.patch("/api/v1/users/me/settings", headers=auth(priya), json={"typing_indicators_enabled": False})
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws, live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(alex_ws)
+        drain(priya_ws)
+        priya_ws.send_json({"type": "typing.start", "payload": {"conversation_id": dm}})
+        alex_ws.send_json({"type": "typing.start", "payload": {"conversation_id": dm}})
+        to_priya = drain(priya_ws)
+        to_alex = drain(alex_ws)
+
+    assert of_type(to_alex, "typing.start") == []  # Priya's typing isn't sent
+    assert of_type(to_priya, "typing.start") == []  # and she doesn't see Alex's
+
+
+def test_read_receipts_off_sends_no_read_event(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    dm = chat(live, alex, "Priya Sharma")["id"]
+    live.patch("/api/v1/users/me/settings", headers=auth(priya), json={"read_receipts_enabled": False})
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws, live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(alex_ws)
+        drain(priya_ws)
+        sent = send(live, alex, dm, "Will you read this?", "ws-test-0201")
+        drain(alex_ws)
+        live.post(f"/api/v1/conversations/{dm}/read", headers=auth(priya), json={"up_to_message_id": sent["id"]})
+        statuses = [u["status"] for s in of_type(drain(alex_ws), "message.status") for u in s["updates"]]
+
+    assert "read" not in statuses
+
+
+def test_blocked_senders_message_is_not_pushed(live: TestClient) -> None:
+    alex, priya = token(live, ALEX), token(live, PRIYA)
+    live.put(f"/api/v1/blocks/{me(live, priya)}", headers=auth(alex))
+    dm = chat(live, priya, "Alex Rivera")["id"]
+
+    with live.websocket_connect(f"/ws?token={alex}") as alex_ws, live.websocket_connect(f"/ws?token={priya}") as priya_ws:
+        drain(alex_ws)
+        drain(priya_ws)
+        send(live, priya, dm, "Hello?", "ws-test-0202")
+        to_alex = drain(alex_ws)
+        to_priya = drain(priya_ws)
+
+    assert of_type(to_alex, "message.new") == []
+    assert of_type(to_priya, "message.status") == []  # no delivered tick

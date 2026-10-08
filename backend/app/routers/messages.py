@@ -42,6 +42,8 @@ async def send_message(
         raise _NOT_FOUND from None
     except message_service.NotActiveMemberError:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="You're no longer a member of this group") from None
+    except message_service.RecipientBlockedError:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Unblock this person to send messages") from None
     except message_service.ClientIdConflictError:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="client_id was already used in another conversation") from None
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK

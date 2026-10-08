@@ -27,6 +27,7 @@ class ConversationSummary(BaseModel):
     other_user_online: bool | None  # DMs only: has an open connection (bots always)
     other_user_last_seen_at: datetime | None  # DMs only
     is_contact: bool | None  # DMs only: is the other person in my contacts?
+    blocked_by_me: bool | None  # DMs only: have I blocked the other person? (composer shows Unblock)
     member_count: int
     is_pinned: bool
     is_archived: bool

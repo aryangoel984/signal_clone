@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time import utc_now
 from app.models import Block, ConversationMember, Message, MessageReceipt, User, UserSettings
-from app.models.enums import MessageKind
+from app.models.enums import ConversationType, MessageKind
 from app.schemas.message import MessageDetails, MessageOut, MessagePage, Recipient
 from app.services.conversation_service import ConversationNotFoundError, load_membership
 from app.services.message_queries import current_member_receipts, statuses_for, visible_to
@@ -22,6 +22,10 @@ class NotActiveMemberError(Exception):
 
 class ClientIdConflictError(Exception):
     """The client_id was already used by this sender in a different conversation."""
+
+
+class RecipientBlockedError(Exception):
+    """I blocked the other person in this DM: unblock to send (PLAN 7.2)."""
 
 
 class MessageNotFoundError(Exception):
@@ -67,6 +71,10 @@ async def send_message(
     member, conversation = await load_membership(session, viewer.id, conversation_id)
     if member.left_at is not None:
         raise NotActiveMemberError
+    if conversation.type is ConversationType.DIRECT and await _i_blocked_the_other(session, conversation_id, viewer.id):
+        raise RecipientBlockedError
+    # The reverse (they blocked me) is deliberately not an error: my send "succeeds", but they
+    # get no receipt row and no push, so it stays at one tick (Signal doesn't reveal blocks).
 
     existing = await _find_by_client_id(session, viewer.id, client_id)
     if existing is not None:
@@ -157,6 +165,14 @@ async def _existing_result(
     if message.conversation_id != conversation_id:
         raise ClientIdConflictError
     return (await serialize(session, viewer, [message]))[0], False
+
+
+async def _i_blocked_the_other(session: AsyncSession, conversation_id: int, viewer_id: int) -> bool:
+    other = select(ConversationMember.user_id).where(
+        ConversationMember.conversation_id == conversation_id, ConversationMember.user_id != viewer_id
+    )
+    found = await session.scalar(select(Block.blocked_id).where(Block.blocker_id == viewer_id, Block.blocked_id.in_(other)))
+    return found is not None
 
 
 async def _recipient_ids(session: AsyncSession, conversation_id: int, sender_id: int) -> list[int]:

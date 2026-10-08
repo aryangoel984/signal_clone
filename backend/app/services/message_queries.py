@@ -9,21 +9,28 @@ from sqlalchemy import ColumnElement, Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Block, ConversationMember, Message, MessageReceipt, User, UserSettings
+from app.models import Conversation
 from app.models.enums import MessageKind, MessageStatus
 
 
-def visible_to(member: ConversationMember) -> ColumnElement[bool]:
-    """Messages of the member's conversation inside their history range, excluding
-    messages from users they blocked that were sent after the block."""
-    in_range = and_(Message.conversation_id == member.conversation_id, Message.id > member.history_start_id)
-    if member.history_end_id is not None:
-        in_range = and_(in_range, Message.id <= member.history_end_id)
-    blocked_sender = exists().where(
-        Block.blocker_id == member.user_id,
+def not_from_blocked(viewer_id: int) -> ColumnElement[bool]:
+    """Excludes messages (including system lines, e.g. renames) from users the viewer blocked,
+    sent after the block. Signal hides a blocked person's messages *and* their changes to a
+    shared group from the blocker (PLAN 7.2)."""
+    return ~exists().where(
+        Block.blocker_id == viewer_id,
         Block.blocked_id == Message.sender_id,
         Block.created_at <= Message.created_at,
     )
-    return and_(in_range, ~blocked_sender)
+
+
+def visible_to(member: ConversationMember) -> ColumnElement[bool]:
+    """Messages of the member's conversation inside their history range, minus messages from
+    users they blocked that were sent after the block."""
+    in_range = and_(Message.conversation_id == member.conversation_id, Message.id > member.history_start_id)
+    if member.history_end_id is not None:
+        in_range = and_(in_range, Message.id <= member.history_end_id)
+    return and_(in_range, not_from_blocked(member.user_id))
 
 
 async def unread_count(session: AsyncSession, member: ConversationMember) -> int:
@@ -88,3 +95,39 @@ async def statuses_for(session: AsyncSession, viewer: User, message_ids: Sequenc
             status = MessageStatus.DELIVERED
         statuses[message_id] = status
     return statuses
+
+
+NAME_EVENTS = ("group_created", "group_renamed")
+PHOTO_EVENTS = ("group_avatar_changed",)
+
+
+async def group_appearance(session: AsyncSession, viewer_id: int, conversation: Conversation) -> tuple[str, str | None]:
+    """The group's name and photo as this viewer may see them. If the latest rename / photo
+    change came from someone the viewer blocked, they keep seeing the previous name and the
+    default photo (the previous photo file is deleted on change, so it can't be shown)."""
+    name, photo = conversation.name or "Group", conversation.avatar_url
+    if await session.scalar(select(Block.blocked_id).where(Block.blocker_id == viewer_id).limit(1)) is None:
+        return name, photo  # fast path: the viewer blocked nobody
+
+    def events(kinds: tuple[str, ...]) -> Select[Message]:
+        return (
+            select(Message)
+            .where(Message.conversation_id == conversation.id, Message.kind == MessageKind.SYSTEM, Message.body.in_(kinds))
+            .order_by(Message.id.desc())
+            .limit(1)
+        )
+
+    latest_name, allowed_name = (
+        await session.scalar(events(NAME_EVENTS)),
+        await session.scalar(events(NAME_EVENTS).where(not_from_blocked(viewer_id))),
+    )
+    if latest_name is not None and latest_name is not allowed_name:
+        name = str((allowed_name.system_data or {}).get("name", "Group")) if allowed_name else "Group"
+
+    latest_photo, allowed_photo = (
+        await session.scalar(events(PHOTO_EVENTS)),
+        await session.scalar(events(PHOTO_EVENTS).where(not_from_blocked(viewer_id))),
+    )
+    if latest_photo is not None and latest_photo is not allowed_photo:
+        photo = None
+    return name, photo

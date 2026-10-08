@@ -5,6 +5,7 @@ import { type KeyboardEvent, useRef, useState } from "react";
 
 import { IconButton } from "@/components/IconButton";
 import { useTypingSender } from "@/hooks/useTypingSender";
+import { useSettings } from "@/store/settings";
 import { Menu, type MenuPosition } from "@/components/Menu";
 import { COMING_SOON, showToast } from "@/store/toasts";
 
@@ -21,6 +22,7 @@ const LINE_HEIGHT_PX = 20;
 export function Composer({ conversationId, onSend, disabledReason }: ComposerProps) {
   const [text, setText] = useState("");
   const typing = useTypingSender(conversationId);
+  const enterSends = useSettings((state) => state.settings?.enter_key_sends ?? true);
   const [attachMenu, setAttachMenu] = useState<MenuPosition | null>(null);
   const field = useRef<HTMLTextAreaElement>(null);
 
@@ -47,8 +49,11 @@ export function Composer({ conversationId, onSend, disabledReason }: ComposerPro
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    // Enter sends, Shift+Enter adds a line. Never send mid-IME-composition.
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    // "Enter key sends" on: Enter sends, Shift+Enter adds a line. Off: Enter adds a line,
+    // Ctrl/Cmd+Enter sends. Never send mid-IME-composition.
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    const sendIt = enterSends ? !event.shiftKey : event.ctrlKey || event.metaKey;
+    if (sendIt) {
       event.preventDefault();
       send();
     }

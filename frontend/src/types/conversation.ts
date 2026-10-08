@@ -25,6 +25,7 @@ export type ConversationSummary = {
   other_user_online: boolean | null;
   other_user_last_seen_at: string | null;
   is_contact: boolean | null;
+  blocked_by_me: boolean | null; // DMs: I blocked the other person
   member_count: number;
   is_pinned: boolean;
   is_archived: boolean;

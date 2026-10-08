@@ -9,6 +9,7 @@ import { useMessages } from "@/store/messages";
 import { useRevisions } from "@/store/revisions";
 import type { ConversationDetail } from "@/types/conversation";
 
+import { BlockedBanner } from "./BlockedBanner";
 import { ChatHeader } from "./ChatHeader";
 import { Composer } from "./Composer";
 import { Timeline } from "./Timeline";
@@ -72,6 +73,9 @@ export function ChatView({ conversationId }: { conversationId: number }) {
     <div className="flex min-w-0 flex-1 flex-col bg-chat">
       <ChatHeader conversation={conversation} onChanged={update} onOpenSettings={() => setView("settings")} />
       <Timeline conversation={conversation} myId={me.id} lastReadAtOpen={state.lastReadAtOpen} />
+      {conversation.blocked_by_me ? (
+        <BlockedBanner name={conversation.title} userId={conversation.other_user_id} onChanged={update} conversationId={conversationId} />
+      ) : (
       <Composer
         conversationId={conversationId}
         onSend={(text) => void send(conversationId, text, me)}
@@ -79,6 +83,7 @@ export function ChatView({ conversationId }: { conversationId: number }) {
           conversation.can_send ? undefined : "You can't send messages to this group because you're no longer a member."
         }
       />
+      )}
     </div>
   );
 }

@@ -1,11 +1,12 @@
 "use client";
 
-import { Archive, ArchiveRestore, Ellipsis, Phone, Pin, PinOff, Search, Settings, UserRoundPlus, Video } from "lucide-react";
+import { Archive, ArchiveRestore, Ban, Ellipsis, Phone, Pin, PinOff, Search, Settings, UserRoundPlus, Video } from "lucide-react";
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { IconButton } from "@/components/IconButton";
 import { belowElement, Menu, type MenuItem, type MenuPosition } from "@/components/Menu";
+import { ConfirmDialog } from "@/components/Modal";
 import { ApiError, apiRequest } from "@/lib/api";
 import { formatLastSeen } from "@/lib/format-time";
 import { useConversations } from "@/store/conversations";
@@ -23,6 +24,7 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
   const setPreferences = useConversations((state) => state.setPreferences);
   const loadChats = useConversations((state) => state.loadChats);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
+  const [confirmBlock, setConfirmBlock] = useState(false);
   const isGroup = conversation.type === "group";
   const presence = usePresence(conversation.other_user_id, {
     online: conversation.other_user_online ?? false,
@@ -30,7 +32,7 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
   });
   const subtitle = isGroup ? null : presence.online ? "Online" : formatLastSeen(presence.lastSeenAt);
 
-  async function run(action: () => Promise<ConversationDetail>, done: string) {
+  async function run(action: () => Promise<ConversationDetail>, done: string): Promise<void> {
     try {
       onChanged(await action());
       showToast(done);
@@ -45,6 +47,13 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
       await loadChats();
       return apiRequest<ConversationDetail>(`/conversations/${conversation.id}`);
     }, "Added to contacts");
+
+  const setBlocked = (block: boolean) =>
+    run(async () => {
+      await apiRequest<void>(`/blocks/${conversation.other_user_id}`, { method: block ? "PUT" : "DELETE" });
+      await loadChats();
+      return apiRequest<ConversationDetail>(`/conversations/${conversation.id}`);
+    }, block ? "Blocked" : "Unblocked");
 
   const items: MenuItem[] = [
     ...(isGroup ? [{ label: "Group settings", icon: Settings, onSelect: onOpenSettings }] : []),
@@ -61,6 +70,13 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
           onSelect: () => void run(() => setPreferences(conversation.id, { is_archived: false }), "Chat unarchived"),
         }
       : { label: "Archive", icon: Archive, onSelect: () => void run(() => setPreferences(conversation.id, { is_archived: true }), "Chat archived") },
+    ...(!isGroup && conversation.other_user_id !== null
+      ? [
+          conversation.blocked_by_me
+            ? { label: "Unblock", icon: Ban, onSelect: () => void setBlocked(false) }
+            : { label: "Block", icon: Ban, danger: true, onSelect: () => setConfirmBlock(true) },
+        ]
+      : []),
   ];
 
   return (
@@ -84,6 +100,19 @@ export function ChatHeader({ conversation, onChanged, onOpenSettings }: ChatHead
         <IconButton icon={Search} label="Search in chat" onClick={() => showToast(COMING_SOON)} />
         <IconButton icon={Ellipsis} label="More options" onClick={(event) => setMenuPosition(belowElement(event.currentTarget))} />
       </div>
+      {confirmBlock && (
+        <ConfirmDialog
+          title={`Block ${conversation.title}?`}
+          message="Blocked people won't be able to call you or send you messages. In groups you share, you won't see their messages or changes."
+          confirmLabel="Block"
+          danger
+          onCancel={() => setConfirmBlock(false)}
+          onConfirm={() => {
+            setConfirmBlock(false);
+            void setBlocked(true);
+          }}
+        />
+      )}
       {menuPosition && (
         <Menu
           items={items}

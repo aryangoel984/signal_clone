@@ -65,7 +65,7 @@ async def create_group(
     await session.flush()
     session.add(ConversationMember(conversation_id=conversation.id, user_id=creator.id, role=MemberRole.ADMIN))
     session.add_all(ConversationMember(conversation_id=conversation.id, user_id=user_id) for user_id in others)
-    message = await _system_message(session, conversation, creator.id, "group_created")
+    message = await _system_message(session, conversation, creator.id, "group_created", extra={"name": name})
     creator_member = await session.get(ConversationMember, (conversation.id, creator.id))
     assert creator_member is not None
     creator_member.last_read_message_id = message.id
@@ -102,7 +102,7 @@ async def set_group_avatar(
     new_url = await save_image(upload, uploads_dir, "groups", str(conversation_id)) if upload else None
     old_url = conversation.avatar_url
     conversation.avatar_url = new_url
-    message = await _system_message(session, conversation, viewer.id, "group_avatar_changed")
+    message = await _system_message(session, conversation, viewer.id, "group_avatar_changed", extra={"avatar_url": new_url})
     await session.commit()
     await delete_media(old_url, uploads_dir)
     await realtime.message_created(message.id)

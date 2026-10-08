@@ -188,6 +188,8 @@ class Realtime:
             if settings is not None and not settings.typing_indicators_enabled:
                 return
             blocked_me = select(Block.blocker_id).where(Block.blocked_id == user_id)
+            # People who turned typing indicators off don't see others' either (Signal).
+            not_watching = select(UserSettings.user_id).where(UserSettings.typing_indicators_enabled.is_(False))
             audience = (
                 await session.execute(
                     select(ConversationMember.user_id).where(
@@ -195,6 +197,7 @@ class Realtime:
                         ConversationMember.left_at.is_(None),
                         ConversationMember.user_id != user_id,
                         ConversationMember.user_id.not_in(blocked_me),
+                        ConversationMember.user_id.not_in(not_watching),
                     )
                 )
             ).scalars()
