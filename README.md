@@ -13,8 +13,8 @@ A full-stack clone of **Signal Desktop**: phone-number sign-in, contacts, one-to
 
 ## Live demo
 
-- **App:** `https://signal-clone-lime-sigma.vercel.app/`
-- **API:** `https://signalclone-production-5ee8.up.railway.app/` (health check: `https://signalclone-production-5ee8.up.railway.app//api/v1/health`, interactive docs: `https://signalclone-production-5ee8.up.railway.app//docs`)
+- **App:** `<https://signal-clone-lime-sigma.vercel.app/>`
+- **API:** `<https://signalclone-production-5ee8.up.railway.app/>` (health check: `<https://signalclone-production-5ee8.up.railway.app//api/v1/health>`, interactive docs: `<https://signalclone-production-5ee8.up.railway.app//docs>`)
 
 **Demo accounts** (the verification code is always **`123456`**; the register screen has a "Demo accounts" panel that fills these in):
 
