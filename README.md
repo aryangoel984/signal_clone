@@ -3,6 +3,25 @@
 A Signal Desktop clone built with Next.js, FastAPI, SQLite and WebSockets.
 Work in progress. Setup, architecture and the API overview are added as phases land; see [docs/PLAN.md](docs/PLAN.md).
 
+## Run locally
+
+```bash
+# Backend (Python 3.11)
+cd backend && python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt     # runtime deps + test tools
+cp .env.example .env
+python -m app.seed                      # idempotent demo data
+uvicorn app.main:app --reload --port 8000
+pytest -q                               # tests
+
+# Frontend (Node 24)
+cd frontend && nvm use && npm install
+cp .env.example .env.local
+npm run dev                             # http://localhost:3000
+```
+
+Deploying: see [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Demo login
 
 Phone `+1 555 010 0001` (Alex Rivera) or `+1 555 010 0002` (Priya Sharma), verification code `123456`.

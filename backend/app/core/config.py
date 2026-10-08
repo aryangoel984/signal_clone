@@ -29,6 +29,13 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("cors_origins")
+    @classmethod
+    def drop_trailing_slash(cls, origins: list[str]) -> list[str]:
+        """Browsers send `Origin: https://x.vercel.app` with no slash, so a pasted
+        `https://x.vercel.app/` would never match. Normalise it."""
+        return [origin.rstrip("/") for origin in origins]
+
 
 @lru_cache
 def get_settings() -> Settings:

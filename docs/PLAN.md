@@ -502,6 +502,11 @@ AppShell
 | 8 | **Bonus** (by value) | Reply/quote → reactions → attachments → disappearing messages (sweeper task) → keyboard shortcuts. | Each bonus feature works end to end. |
 | 9 | **Ship (final deploy)** | README (setup, architecture, ER/table list, API overview, assumptions, demo login, bot accounts). Final deploy to the same hosts as 2b: `app.db` and `uploads/` on the persistent volume. Boot runs the idempotent seed. If a clean demo dataset is wanted, run `--reset` once **by hand** before submitting (never on boot). Then a smoke test of every core feature on the public URLs. | The public link works with seeded data, logging in with phone + `123456`, and a single-browser demo with a bot works end to end. |
 
+## 5a. Phase 2b outcome (deploy files)
+- `backend/Dockerfile` (python:3.11-slim, `pip install --no-cache-dir -r requirements.txt`, start = idempotent seed then `uvicorn --workers 1 --proxy-headers`), `.dockerignore`, `railway.json` (health check `/api/v1/health`, **60 s timeout** for the first-boot seed, 1 replica). `requirements.txt` is runtime only; tests use `requirements-dev.txt`.
+- The app creates the SQLite file's folder and `UPLOADS_DIR` on startup (tested with a fresh, non-existent `data/` folder). `CORS_ORIGINS` entries have a trailing slash stripped.
+- Dashboard steps: [docs/DEPLOY.md](DEPLOY.md). The start command was rehearsed locally twice on an empty folder: seed, health, WebSocket, bot reply, CORS, and a no-op second seed.
+
 ## 5b. Phase 7 outcome (polish)
 - **Responsive:** two panes from **900px** (Tailwind `pane:` breakpoint), one pane below. `/chats` shows the list and `/chats/[id]` the chat, with a ‹ back button. Settings works the same way (`/settings` menu → `/settings/[section]` page with back). The nav rail becomes a **bottom bar** on top-level screens (hidden inside a chat or settings page). The layout uses `100dvh` and `viewport-fit=cover`. `interactive-widget=resizes-content` keeps the composer above the on-screen keyboard. The composer and bottom bar pad by `env(safe-area-inset-bottom)`. Checked at 390×844, 820×1180 and 1440×900: no horizontal scroll, and the composer stays inside the viewport.
 - **Mute:** chat ⋯ → Mute for 1 hour / 8 hours / 1 week / always (always = `muted_until` 9999-12-31), or Unmute. A muted icon shows in the list and header. Muted chats get no in-app toasts.

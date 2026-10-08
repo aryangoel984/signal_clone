@@ -37,8 +37,10 @@ signal-clone/
 │   │   ├── ws/               # WebSocket connection manager and event handlers
 │   │   └── seed.py           # seed script
 │   ├── tests/
-│   ├── requirements.txt
-│   └── Dockerfile
+│   ├── requirements.txt      # runtime only (Docker image)
+│   ├── requirements-dev.txt  # + test tools
+│   ├── Dockerfile
+│   └── railway.json
 └── frontend/
     ├── src/
     │   ├── app/              # routes (login, verify, onboarding, main app shell)
@@ -126,9 +128,10 @@ The UI must match Signal Desktop as closely as possible. Always compare against 
 ```bash
 # Backend
 cd backend && python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt     # runtime deps + pytest (requirements.txt is runtime only, for Docker)
 python -m app.seed
 uvicorn app.main:app --reload --port 8000
+pytest -q                               # tests
 
 # Frontend
 cd frontend && npm install && npm run dev   # http://localhost:3000

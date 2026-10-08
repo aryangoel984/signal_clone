@@ -1,9 +1,10 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fastapi import Request
-from sqlalchemy import event
+from sqlalchemy import event, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import Base
@@ -26,6 +27,14 @@ def _set_sqlite_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
         cursor.close()
 
 
+def _ensure_sqlite_folder(url: str) -> None:
+    """SQLite creates the database file but not its folder. On a fresh volume
+    (e.g. DATABASE_URL=sqlite+aiosqlite:////data/app.db) the folder may not exist yet."""
+    path = make_url(url).database
+    if path and path != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+
 @dataclass(frozen=True)
 class Database:
     engine: AsyncEngine
@@ -33,6 +42,7 @@ class Database:
 
 
 def create_database(url: str) -> Database:
+    _ensure_sqlite_folder(url)
     engine = create_async_engine(url)
     event.listen(engine.sync_engine, "connect", _set_sqlite_pragmas)
     # expire_on_commit=False: services read objects after commit (responses, WS events);
