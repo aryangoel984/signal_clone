@@ -13,8 +13,9 @@ A full-stack clone of **Signal Desktop**: phone-number sign-in, contacts, one-to
 
 ## Live demo
 
-- **App:** `<VERCEL_URL>` ← fill in
-- **API:** `<RAILWAY_URL>` ← fill in (health check: `<RAILWAY_URL>/api/v1/health`, interactive docs: `<RAILWAY_URL>/docs`)
+- **App:** https://signal-clone-lime-sigma.vercel.app
+- **API:** https://signalclone-production-5ee8.up.railway.app ([health check](https://signalclone-production-5ee8.up.railway.app/api/v1/health) · [interactive docs](https://signalclone-production-5ee8.up.railway.app/docs))
+- **Code:** https://github.com/aryangoel984/signal_clone
 
 **Demo accounts** (the verification code is always **`123456`**; the register screen has a "Demo accounts" panel that fills these in):
 
@@ -45,7 +46,7 @@ Any other valid phone number signs up a new account (with onboarding: name and p
 Prerequisites: **Python 3.11+** and **Node 24** (`frontend/.nvmrc`).
 
 ```bash
-git clone <REPO_URL> signal-clone && cd signal-clone
+git clone https://github.com/aryangoel984/signal_clone.git signal-clone && cd signal-clone
 
 # Backend: http://localhost:8000 (docs at /docs)
 cd backend
