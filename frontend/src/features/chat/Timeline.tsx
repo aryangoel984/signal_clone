@@ -101,6 +101,12 @@ export function Timeline({ conversation, myId, lastReadAtOpen, onReply }: Timeli
       }
       await nextFrame(); // let React render the new page
     }
+    // An older page still loading (e.g. from scrolling up) would restore the old scroll
+    // position when it lands and undo the jump, so let it finish first.
+    for (let step = 0; useMessages.getState().threads[conversationId]?.loadingOlder && step < JUMP_MAX_STEPS * 10; step++) {
+      await nextFrame();
+    }
+    await nextFrame(); // and let React render it
     const target = element();
     if (!target) {
       showToast("Original message not found");
