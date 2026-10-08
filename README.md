@@ -1,8 +1,8 @@
 # Signal Clone
 
-**Author:** Aryan Goel
-**Roll no:** 23/IT/209
-**College:** Delhi Technological University
+**Author:** Aryan Goel\
+**Roll no:** 23/IT/209\
+**College:** Delhi Technological University\
 **Made for:** assignment submission for Scaler AI Labs (SDE Fullstack Assignment: Signal clone)
 
 A full-stack clone of **Signal Desktop**: phone-number sign-in, contacts, one-to-one and group chats, real-time delivery with sending → sent → delivered → read ticks, typing indicators, presence, groups with admin controls, replies and emoji reactions, settings, light/dark themes and a mobile layout. Built with Next.js, FastAPI, SQLite and native WebSockets.
@@ -364,6 +364,10 @@ Built **from memory**, because no reference screenshot covered them:
 - five of the twelve avatar colours (the other seven were sampled).
 
 Known differences: Settings omits desktop-only sections (Permissions, Updates, Stories, Advanced), the Privacy page lists blocked users inline rather than on a sub-page, the Calls tab has no call history, and the app shows online/last-seen, which Signal doesn't.
+
+## Development process
+
+Built with **Claude Code** (Anthropic's AI coding assistant) as a pair programmer. The ground rules are in [CLAUDE.md](CLAUDE.md), kept in the repo on purpose. The schema, API and WebSocket contract were designed first in [docs/PLAN.md](docs/PLAN.md), and the build went one phase at a time. For each phase I reviewed a short plan and approved it, often with changes. Claude Code then wrote the code and tests and checked the result in real browsers. I reviewed it, tested by hand, and made every commit myself.
 
 ## Repository layout
 
